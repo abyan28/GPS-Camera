@@ -1,17 +1,39 @@
-# geotag_camera
+# Geotag Camera
 
-A new Flutter project.
+Aplikasi kamera Flutter yang menandai setiap foto dengan lokasi GPS dan
+waktu pengambilan. Dibangun **local-first** dan **free-first / OSM-first**:
+tidak ada backend, login, database server, atau Google Maps Platform.
+Lihat `agents/prd-free-first.md`, `agents/workflow-free-first.md`, dan
+`agents/rules-free-first.md` untuk spesifikasi lengkap.
 
-## Getting Started
+## Status implementasi saat ini
 
-This project is a starting point for a Flutter application.
+Sesi ini menyelesaikan **Fase 0–4** dari `workflow-free-first.md`:
 
-A few resources to get you started if this is your first Flutter project:
+- Bootstrap project Flutter, struktur folder, tema dasar.
+- App shell dengan navigasi Camera / Settings / History.
+- Camera: preview, shutter, switch kamera, simpan foto original ke storage lokal.
+- Location: status GPS live + kategori akurasi, freeze snapshot saat capture.
+- Timestamp & `CaptureSession`: satu snapshot foto+lokasi+waktu per capture.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+**Belum diimplementasikan** (fase berikutnya): reverse geocoding (Nominatim),
+map thumbnail (OpenFreeMap/MapLibre), watermark rendering ke gambar, settings
+persistence, EXIF, dan history penuh. Screen Settings dan History saat ini
+masih placeholder.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Menjalankan project
+
+```
+flutter pub get
+flutter run
+```
+
+Izin kamera dan lokasi akan diminta saat aplikasi pertama kali dibuka.
+
+## Verifikasi
+
+```
+flutter analyze
+flutter test
+flutter build apk --debug
+```
