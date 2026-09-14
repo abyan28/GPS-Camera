@@ -54,6 +54,21 @@ dependencies:
   # Format tanggal/waktu lokal Indonesia (Fase 4).
   intl: ^0.19.0
 
+  # HTTP client untuk reverse geocoding (Nominatim) dan map tile (Fase 7-8).
+  http: ^1.2.2
+
+  # Encode/decode/composite gambar untuk watermark & map thumbnail (Fase 5, 8).
+  image: ^4.3.0
+
+  # Persist settings watermark secara lokal (Fase 11).
+  shared_preferences: ^2.3.2
+
+  # Tulis metadata EXIF GPS/timestamp ke file JPG (Fase 12).
+  native_exif: ^0.8.0
+
+  # Share foto lewat native share sheet (Fase 6/11 History).
+  share_plus: ^10.1.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

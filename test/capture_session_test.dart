@@ -14,7 +14,8 @@ void main() {
       capturedAt: timestamp,
     );
     final session = CaptureSession(
-      imageFile: File('dummy.jpg'),
+      originalImageFile: File('dummy_original.jpg'),
+      processedImageFile: File('dummy_processed.jpg'),
       location: location,
       timestamp: timestamp,
       timeZoneName: timestamp.timeZoneName,
@@ -22,6 +23,9 @@ void main() {
 
     expect(session.location, same(location));
     expect(session.timestamp, timestamp);
-    expect(session.imageFile.path, 'dummy.jpg');
+    expect(session.originalImageFile.path, 'dummy_original.jpg');
+    expect(session.processedImageFile.path, 'dummy_processed.jpg');
+    expect(session.address, isNull);
+    expect(session.map, isNull);
   });
 }

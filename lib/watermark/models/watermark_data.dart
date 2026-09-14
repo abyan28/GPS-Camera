@@ -1,28 +1,18 @@
-import 'dart:io';
-
 import '../../geocoding/models/address_snapshot.dart';
 import '../../location/models/location_snapshot.dart';
 import '../../map/models/map_snapshot.dart';
 
-/// Seluruh informasi satu hasil capture, dibekukan pada momen yang sama.
-/// [address] dan [map] bersifat opsional karena bergantung koneksi
-/// internet; kegagalan keduanya tidak boleh menggagalkan capture.
-class CaptureSession {
-  const CaptureSession({
-    required this.originalImageFile,
-    required this.processedImageFile,
+/// Seluruh data non-visual yang dibutuhkan watermark renderer untuk satu
+/// foto. Renderer hanya menerima data lewat model ini, tidak pernah
+/// mengambil GPS/HTTP sendiri.
+class WatermarkData {
+  const WatermarkData({
     required this.location,
     required this.timestamp,
     required this.timeZoneName,
     this.address,
     this.map,
   });
-
-  /// Foto asli tanpa watermark, tidak pernah ditimpa.
-  final File originalImageFile;
-
-  /// Foto dengan watermark sudah dirender, ini yang ditampilkan di history.
-  final File processedImageFile;
 
   final LocationSnapshot location;
   final DateTime timestamp;

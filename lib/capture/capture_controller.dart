@@ -2,39 +2,74 @@
 // Nama parameter publik sengaja berbeda dari nama field private, sehingga
 // initializing formal (this._field) tidak dapat dipakai lintas file.
 
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 
 import '../camera/camera_controller_service.dart';
+import '../core/network/safe_fetch.dart';
+import '../geocoding/geocoding_provider.dart';
+import '../geocoding/models/address_snapshot.dart';
+import '../history/models/history_entry.dart';
+import '../history/photo_history_service.dart';
 import '../location/location_service.dart';
+import '../location/models/location_snapshot.dart';
+import '../map/map_thumbnail_provider.dart';
 import '../storage/photo_storage_service.dart';
+import '../watermark/models/watermark_configuration.dart';
+import '../watermark/models/watermark_data.dart';
+import '../watermark/watermark_renderer.dart';
+import 'exif_writer.dart';
 import 'models/capture_session.dart';
 
 enum CaptureStatus { idle, capturing, success, error }
 
-/// Orchestrate satu capture: ambil foto + bekukan lokasi + timestamp menjadi
-/// satu [CaptureSession]. Tidak boleh membaca ulang GPS/waktu terpisah
-/// setelah snapshot dibuat.
+/// Orchestrate satu capture penuh: bekukan lokasi+waktu, ambil foto,
+/// reverse geocoding, map thumbnail, render watermark, simpan
+/// original+processed, tulis EXIF, catat ke history. Setiap langkah online
+/// (geocoding/map/EXIF) bersifat best-effort, kegagalannya tidak pernah
+/// menggagalkan capture, sesuai prinsip offline-first di rules-free-first.md §16.
 class CaptureController extends ChangeNotifier {
   CaptureController({
     required LocationService locationService,
     required CameraControllerService cameraService,
     required PhotoStorageService storageService,
+    required GeocodingProvider geocodingProvider,
+    required MapThumbnailProvider mapThumbnailProvider,
+    required PhotoHistoryService historyService,
+    required WatermarkConfiguration Function() watermarkConfigProvider,
+    required bool Function() saveOriginalProvider,
+    WatermarkRenderer? watermarkRenderer,
+    ExifWriter? exifWriter,
   })  : _locationService = locationService,
         _cameraService = cameraService,
-        _storageService = storageService;
+        _storageService = storageService,
+        _geocodingProvider = geocodingProvider,
+        _mapThumbnailProvider = mapThumbnailProvider,
+        _historyService = historyService,
+        _watermarkConfigProvider = watermarkConfigProvider,
+        _saveOriginalProvider = saveOriginalProvider,
+        _watermarkRenderer = watermarkRenderer ?? WatermarkRenderer(),
+        _exifWriter = exifWriter ?? ExifWriter();
 
   final LocationService _locationService;
   final CameraControllerService _cameraService;
   final PhotoStorageService _storageService;
+  final GeocodingProvider _geocodingProvider;
+  final MapThumbnailProvider _mapThumbnailProvider;
+  final PhotoHistoryService _historyService;
+  final WatermarkConfiguration Function() _watermarkConfigProvider;
+  final bool Function() _saveOriginalProvider;
+  final WatermarkRenderer _watermarkRenderer;
+  final ExifWriter _exifWriter;
 
   CaptureStatus status = CaptureStatus.idle;
   CaptureSession? lastSession;
   String? errorMessage;
 
-  /// Jalankan satu siklus capture penuh: bekukan waktu, bekukan lokasi,
-  /// ambil foto, simpan ke storage, lalu gabungkan semuanya jadi satu
-  /// [CaptureSession]. Kegagalan location/camera/storage ditangkap dan
-  /// diterjemahkan ke pesan error yang ramah pengguna.
+  /// Jalankan satu siklus capture penuh. Kegagalan lokasi/kamera/storage
+  /// dianggap kegagalan capture; kegagalan geocoding/map/EXIF hanya
+  /// menghasilkan data yang lebih sedikit, bukan capture gagal.
   Future<void> capture() async {
     status = CaptureStatus.capturing;
     errorMessage = null;
@@ -44,14 +79,64 @@ class CaptureController extends ChangeNotifier {
       final timestamp = DateTime.now();
       final location = await _locationService.freezeSnapshot();
       final photo = await _cameraService.takePicture();
-      final savedFile = await _storageService.saveOriginal(photo.path, capturedAt: timestamp);
+      final baseName = await _storageService.reserveBaseName(timestamp);
+      final originalFile = await _storageService.saveOriginal(photo.path, baseName: baseName);
 
-      lastSession = CaptureSession(
-        imageFile: savedFile,
+      final address = await fetchSafely(
+        () => _geocodingProvider.reverseGeocode(latitude: location.latitude, longitude: location.longitude),
+      );
+      final config = _watermarkConfigProvider();
+      final map = config.showMapThumbnail
+          ? await fetchSafely(
+              () => _mapThumbnailProvider.fetchThumbnail(
+                latitude: location.latitude,
+                longitude: location.longitude,
+                zoom: config.mapZoom,
+              ),
+            )
+          : null;
+
+      final watermarkData = WatermarkData(
         location: location,
         timestamp: timestamp,
         timeZoneName: timestamp.timeZoneName,
+        address: address,
+        map: map,
       );
+      final processedBytes = _watermarkRenderer.render(
+        sourceImageBytes: await originalFile.readAsBytes(),
+        data: watermarkData,
+        config: config,
+      );
+      final processedFile = await _storageService.saveProcessed(processedBytes, baseName: baseName);
+
+      await _writeExifSafely(processedFile, location, timestamp);
+
+      if (!_saveOriginalProvider()) {
+        await originalFile.delete();
+      }
+
+      final session = CaptureSession(
+        originalImageFile: originalFile,
+        processedImageFile: processedFile,
+        location: location,
+        timestamp: timestamp,
+        timeZoneName: timestamp.timeZoneName,
+        address: address,
+        map: map,
+      );
+
+      await _historyService.add(HistoryEntry(
+        baseName: baseName,
+        originalPath: originalFile.path,
+        processedPath: processedFile.path,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        timestamp: timestamp,
+        addressText: address == null ? null : _formattedAddress(address),
+      ));
+
+      lastSession = session;
       status = CaptureStatus.success;
     } on LocationAccessException catch (e) {
       errorMessage = e.userMessage;
@@ -62,5 +147,22 @@ class CaptureController extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  /// Tulis EXIF ke file processed; kegagalan apa pun (mis. keterbatasan
+  /// platform) diabaikan karena EXIF hanya informasi tambahan, watermark
+  /// tetap menjadi sumber informasi visual utama (PRD §13).
+  Future<void> _writeExifSafely(File processedFile, LocationSnapshot location, DateTime timestamp) async {
+    try {
+      await _exifWriter.write(processedFile, location: location, timestamp: timestamp);
+    } catch (_) {
+      // Diamkan: lihat dokumentasi method di atas.
+    }
+  }
+
+  String _formattedAddress(AddressSnapshot address) {
+    return [address.village, address.regency, address.province]
+        .where((component) => component != null && component.isNotEmpty)
+        .join(', ');
   }
 }

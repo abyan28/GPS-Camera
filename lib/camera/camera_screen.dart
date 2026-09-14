@@ -7,8 +7,14 @@ import 'package:provider/provider.dart';
 
 import '../capture/capture_controller.dart';
 import '../core/permissions/app_permissions.dart';
+import '../geocoding/cached_geocoding_provider.dart';
+import '../geocoding/nominatim_geocoding_provider.dart';
+import '../history/photo_history_service.dart';
 import '../location/location_service.dart';
 import '../location/models/location_snapshot.dart';
+import '../map/cached_map_thumbnail_provider.dart';
+import '../map/osm_raster_map_thumbnail_provider.dart';
+import '../settings/settings_controller.dart';
 import '../storage/photo_storage_service.dart';
 import 'camera_controller_service.dart';
 
@@ -36,10 +42,16 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    final settings = context.read<SettingsController>();
     _captureController = CaptureController(
       locationService: _locationService,
       cameraService: _cameraService,
       storageService: PhotoStorageService(),
+      geocodingProvider: CachedGeocodingProvider(NominatimGeocodingProvider()),
+      mapThumbnailProvider: CachedMapThumbnailProvider(OsmRasterMapThumbnailProvider()),
+      historyService: PhotoHistoryService(),
+      watermarkConfigProvider: () => settings.settings.watermark,
+      saveOriginalProvider: () => settings.settings.saveOriginal,
     );
     _bootstrap();
   }
@@ -373,14 +385,23 @@ class _LastCaptureBanner extends StatelessWidget {
 
     final formatted = DateFormat('dd MMM yyyy, HH:mm:ss', 'id_ID').format(capture.timestamp);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(
-        'Tersimpan: $formatted',
-        style: const TextStyle(color: Colors.white),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.file(capture.processedImageFile, width: 40, height: 40, fit: BoxFit.cover),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text('Tersimpan: $formatted', style: const TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
     );
   }
