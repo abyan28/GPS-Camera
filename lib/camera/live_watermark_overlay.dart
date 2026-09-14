@@ -13,6 +13,41 @@ import '../watermark/models/watermark_position.dart';
 import 'device_rotation_controller.dart';
 import 'edge_anchored_rotated.dart';
 
+/// Padding dalam panel watermark hasil foto akhir (`WatermarkRenderer._innerPadding`),
+/// dipakai sebagai acuan supaya padding panel live proporsional dengan hasil akhir.
+const _finalInnerPadding = 14.0;
+
+/// Kalibrasi empiris untuk `previewScale`: dari perbandingan langsung
+/// screenshot preview vs hasil foto oleh user, rumus rasio resolusi murni
+/// ternyata masih menghasilkan panel yang jauh lebih kecil dari proporsi
+/// sesungguhnya di hasil foto (awalnya `3.0`), lalu dikecilkan lagi sesuai
+/// umpan balik user di kedua orientasi ("dikecilkan 1x dari size sekarang",
+/// portrait dan landscape) jadi `3.0 * 0.6 = 1.8`. Angka ini dari pengukuran
+/// nyata (bukan turunan matematis), gampang disetel lagi kalau user uji
+/// ulang dan masih kurang/lebih pas.
+const _liveScaleCalibration = 1.8;
+
+/// Jarak tambahan dari tepi bawah layar untuk watermark yang jatuh di sisi
+/// fisik bawah, supaya tidak tumpang-tindih dengan baris tombol kontrol
+/// (shutter + switch kamera) yang selalu ada di fisik-bawah-tengah layar:
+/// offset tombol dari tepi (24) + diameter tombol shutter (72) + jarak napas.
+const _bottomControlsClearance = 112.0;
+
+/// Lebar maksimum panel saat portrait (device tidak dimiringkan) — dipilih
+/// pas untuk lebar layar portrait, JANGAN diubah (sudah dikonfirmasi user
+/// pas apa adanya).
+const _portraitMaxWidth = 320.0;
+
+/// Proporsi tinggi area preview yang dipakai sebagai lebar maksimum panel
+/// SAAT LANDSCAPE (device dimiringkan 90°). Karena panel diputar sebagai
+/// satu blok (`RotatedBox`), lebar panel SEBELUM diputar menjadi tinggi
+/// visualnya SESUDAH diputar — ruang yang tersedia untuk "melebar" saat
+/// landscape sebenarnya jauh lebih lega (setinggi layar portrait), bukan
+/// dibatasi lebar layar portrait yang sempit (~320) seperti saat portrait.
+/// Melebarkan ini membuat baris teks (terutama alamat) tidak perlu
+/// menumpuk jadi banyak baris.
+const _landscapeMaxWidthFraction = 0.62;
+
 /// Overlay watermark LIVE di atas viewfinder, sebelum shutter ditekan.
 /// Dirender dengan widget Flutter biasa (bukan `WatermarkRenderer` yang
 /// berbasis `image` package), jadi tidak identik piksel-demi-piksel dengan
@@ -24,11 +59,27 @@ class LiveWatermarkOverlay extends StatelessWidget {
     required this.location,
     required this.address,
     required this.mapThumbnailBytes,
+    required this.previewScale,
+    required this.previewAreaSize,
   });
 
   final LocationSnapshot? location;
   final AddressSnapshot? address;
   final Uint8List? mapThumbnailBytes;
+
+  /// Ukuran area preview kamera (dari `LayoutBuilder` di `_CameraBody`),
+  /// dipakai untuk menghitung lebar maksimum panel saat landscape (lihat
+  /// `_landscapeMaxWidthFraction`).
+  final Size previewAreaSize;
+
+  /// Faktor skala dari "1 piksel resolusi asli kamera" ke "1 logical pixel
+  /// di layar" (lihat `_CameraBody._previewScale`). Dikalikan ke semua
+  /// ukuran berbasis `WatermarkConfiguration` supaya panel live sebanding
+  /// secara proporsi dengan panel watermark pada hasil foto akhir, bukan
+  /// memakai angka konfigurasi yang sama mentah-mentah (yang didesain untuk
+  /// gambar beresolusi tinggi, sehingga akan terlihat jauh lebih besar di
+  /// preview kecil).
+  final double previewScale;
 
   /// Bangun panel watermark live sesuai konfigurasi watermark aktif saat
   /// ini, diposisikan sesuai `config.position`.
@@ -38,15 +89,33 @@ class LiveWatermarkOverlay extends StatelessWidget {
     if (location == null) return const SizedBox.shrink();
 
     final config = context.watch<SettingsController>().settings.watermark;
-    final lines = _buildLines(config, location, address);
+    final quarterTurns = context.watch<DeviceRotationController>().quarterTurns;
+    final isLandscape = quarterTurns.isOdd;
+
+    final scale = previewScale * _liveScaleCalibration;
+    final fontSize = config.fontSize * scale;
+    final spacing = config.spacing * scale;
+    final thumbnailSize = config.thumbnailSize * scale;
+    final cornerRadius = config.cornerRadius * scale;
+    final margin = config.margin * scale;
+    final innerPadding = _finalInnerPadding * scale;
+    final maxWidth = isLandscape ? previewAreaSize.height * _landscapeMaxWidthFraction : _portraitMaxWidth;
+
+    final lines = _buildLines(
+      config,
+      location,
+      address,
+      fontSize: fontSize,
+      spacing: spacing,
+    );
     final showThumbnail = config.showMapThumbnail && mapThumbnailBytes != null;
 
     final panel = Container(
-      constraints: const BoxConstraints(maxWidth: 320),
-      padding: const EdgeInsets.all(12),
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      padding: EdgeInsets.all(innerPadding),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: config.opacity.clamp(0, 1)),
-        borderRadius: BorderRadius.circular(config.cornerRadius),
+        borderRadius: BorderRadius.circular(cornerRadius),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -54,15 +123,15 @@ class LiveWatermarkOverlay extends StatelessWidget {
         children: [
           if (showThumbnail) ...[
             ClipRRect(
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(6 * scale),
               child: Image.memory(
                 mapThumbnailBytes!,
-                width: config.thumbnailSize,
-                height: config.thumbnailSize,
+                width: thumbnailSize,
+                height: thumbnailSize,
                 fit: BoxFit.cover,
               ),
             ),
-            SizedBox(width: config.spacing),
+            SizedBox(width: spacing),
           ],
           Flexible(
             child: Column(
@@ -75,19 +144,24 @@ class LiveWatermarkOverlay extends StatelessWidget {
       ),
     );
 
-    final quarterTurns = context.watch<DeviceRotationController>().quarterTurns;
-
     // Posisi tengah (top/bottom, kasus default): pakai EdgeAnchoredRotated
     // supaya sisi yang ditempeli ikut menyesuaikan saat device dimiringkan
     // (misal watermark tetap tampak di BAWAH dari sudut pandang pengguna,
     // bukan cuma menempel di tepi fisik bawah HP yang berpindah makna saat
     // landscape), sekaligus mencegah bug ukuran panel membesar tegas
     // selebar/setinggi layar saat kontennya ditukar orientasi.
-    if (config.position == WatermarkPosition.top || config.position == WatermarkPosition.bottom) {
+    if (config.position == WatermarkPosition.top ||
+        config.position == WatermarkPosition.bottom) {
       return EdgeAnchoredRotated(
-        targetEdge: config.position == WatermarkPosition.top ? ScreenEdge.top : ScreenEdge.bottom,
+        targetEdge: config.position == WatermarkPosition.top
+            ? ScreenEdge.top
+            : ScreenEdge.bottom,
         quarterTurns: quarterTurns,
-        margin: config.margin,
+        margin: margin,
+        // Cuma dipakai kalau sisi target ini memang berakhir di fisik-bawah
+        // (lihat `EdgeAnchoredRotated`) — supaya tidak tumpang-tindih dengan
+        // baris tombol shutter/switch kamera yang selalu di fisik-bawah.
+        extraBottomMargin: _bottomControlsClearance,
         child: panel,
       );
     }
@@ -95,10 +169,10 @@ class LiveWatermarkOverlay extends StatelessWidget {
     // Posisi sudut (topLeft/topRight/bottomLeft/bottomRight): tetap menempel
     // di sudut fisik yang sama, cuma kontennya yang berputar di tempat.
     return Positioned(
-      top: _isTop(config.position) ? config.margin : null,
-      bottom: _isTop(config.position) ? null : config.margin,
-      left: _isRightAligned(config.position) ? null : config.margin,
-      right: _isRightAligned(config.position) ? config.margin : null,
+      top: _isTop(config.position) ? margin : null,
+      bottom: _isTop(config.position) ? null : margin,
+      left: _isRightAligned(config.position) ? null : margin,
+      right: _isRightAligned(config.position) ? margin : null,
       child: RotatedBox(quarterTurns: quarterTurns, child: panel),
     );
   }
@@ -110,27 +184,46 @@ class LiveWatermarkOverlay extends StatelessWidget {
   }
 
   bool _isRightAligned(WatermarkPosition position) {
-    return position == WatermarkPosition.topRight || position == WatermarkPosition.bottomRight;
+    return position == WatermarkPosition.topRight ||
+        position == WatermarkPosition.bottomRight;
   }
 
   /// Susun baris teks live sesuai field yang diaktifkan, meniru urutan
   /// `WatermarkRenderer._buildTextLines` supaya preview konsisten dengan
-  /// hasil akhir.
-  List<Widget> _buildLines(WatermarkConfiguration config, LocationSnapshot location, AddressSnapshot? address) {
+  /// hasil akhir. [fontSize]/[spacing] sudah dikalikan `previewScale`.
+  List<Widget> _buildLines(
+    WatermarkConfiguration config,
+    LocationSnapshot location,
+    AddressSnapshot? address, {
+    required double fontSize,
+    required double spacing,
+  }) {
     final widgets = <Widget>[];
     final formatter = AddressFormatter();
-    final bodyStyle = TextStyle(color: Colors.white, fontSize: config.fontSize);
+    final bodyStyle = TextStyle(color: Colors.white, fontSize: fontSize);
     final titleStyle = TextStyle(
       color: Colors.white,
-      fontSize: config.fontSize * 1.3,
+      fontSize: fontSize * 1.3,
       fontWeight: FontWeight.bold,
     );
 
-    void addLine(String text, {bool isTitle = false}) {
-      widgets.add(Padding(
-        padding: EdgeInsets.only(bottom: config.spacing),
-        child: Text(text, style: isTitle ? titleStyle : bodyStyle),
-      ));
+    // maxLines dibatasi meniru `WatermarkRenderer._buildTextLines` — baris
+    // alamat/custom text boleh sampai 2 baris (paling berisiko panjang),
+    // baris lain cukup 1. Tanpa batas ini, teks bisa menumpuk jadi banyak
+    // baris pada font besar (lihat `_liveScaleCalibration`), bikin panel
+    // jadi sangat tinggi.
+    void addLine(String text, {bool isTitle = false, int maxLines = 1}) {
+      widgets.add(
+        Padding(
+          padding: EdgeInsets.only(bottom: spacing),
+          child: Text(
+            text,
+            style: isTitle ? titleStyle : bodyStyle,
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      );
     }
 
     if (config.showLocationName && address != null) {
@@ -140,28 +233,36 @@ class LiveWatermarkOverlay extends StatelessWidget {
 
     if (config.showAddress) {
       if (address != null && !address.isEmpty) {
-        final formatted = formatter.format(address, includeStreet: true, maxLength: 220);
-        if (formatted.isNotEmpty) addLine(formatted);
+        final formatted = formatter.format(
+          address,
+          includeStreet: true,
+          maxLength: 220,
+        );
+        if (formatted.isNotEmpty) addLine(formatted, maxLines: 2);
       } else if (!config.showCoordinates) {
         addLine(_coordinatesText(location));
       }
     }
 
     if (config.showCoordinates) addLine(_coordinatesText(location));
-    if (config.showDate) addLine(DateFormat('dd MMM yyyy', 'id_ID').format(DateTime.now()));
+    if (config.showDate) {
+      addLine(DateFormat('dd MMM yyyy', 'id_ID').format(DateTime.now()));
+    }
     if (config.showTime) {
       final now = DateTime.now();
       final time = DateFormat('HH:mm:ss', 'id_ID').format(now);
       addLine(config.showTimezone ? '$time (${now.timeZoneName})' : time);
     }
     if (config.showAccuracy && location.accuracy != null) {
-      addLine('Akurasi: ±${location.accuracy!.round()} m (${location.accuracyCategory.label})');
+      addLine(
+        'Akurasi: ±${location.accuracy!.round()} m (${location.accuracyCategory.label})',
+      );
     }
     if (config.showAltitude && location.altitude != null) {
       addLine('Alt: ${location.altitude!.round()} m');
     }
     if (config.customText != null && config.customText!.trim().isNotEmpty) {
-      addLine(config.customText!.trim());
+      addLine(config.customText!.trim(), maxLines: 2);
     }
     addLine(config.appBrandingText);
 

@@ -28,12 +28,19 @@ class EdgeAnchoredRotated extends StatelessWidget {
     required this.quarterTurns,
     required this.margin,
     required this.child,
+    this.extraBottomMargin = 0,
   });
 
   final ScreenEdge targetEdge;
   final int quarterTurns;
   final double margin;
   final Widget child;
+
+  /// Jarak tambahan yang HANYA diterapkan saat sisi fisik yang dipakai
+  /// akhirnya adalah bawah (mis. supaya tidak tumpang-tindih dengan baris
+  /// tombol kontrol yang selalu ada di fisik-bawah-tengah layar, terlepas
+  /// dari sisi target aslinya).
+  final double extraBottomMargin;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +53,7 @@ class EdgeAnchoredRotated extends StatelessWidget {
       case ScreenEdge.right:
         return Positioned(right: margin, top: 0, bottom: 0, child: rotated);
       case ScreenEdge.bottom:
-        return Positioned(bottom: margin, left: 0, right: 0, child: rotated);
+        return Positioned(bottom: margin + extraBottomMargin, left: 0, right: 0, child: rotated);
       case ScreenEdge.left:
         return Positioned(left: margin, top: 0, bottom: 0, child: rotated);
     }

@@ -36,15 +36,20 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
+class _CameraScreenState extends State<CameraScreen>
+    with WidgetsBindingObserver {
   final _appPermissions = AppPermissions();
   final _cameraService = CameraControllerService();
   final _locationService = LocationService();
 
   // Instance yang sama dipakai live-preview dan CaptureController, supaya
   // cache geocoding/map terbagi (tidak dobel request ke LocationIQ).
-  final _geocodingProvider = CachedGeocodingProvider(LocationIqGeocodingProvider());
-  final _mapThumbnailProvider = CachedMapThumbnailProvider(LocationIqMapThumbnailProvider());
+  final _geocodingProvider = CachedGeocodingProvider(
+    LocationIqGeocodingProvider(),
+  );
+  final _mapThumbnailProvider = CachedMapThumbnailProvider(
+    LocationIqMapThumbnailProvider(),
+  );
   final _rotationController = DeviceRotationController();
 
   late final CaptureController _captureController;
@@ -115,7 +120,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   /// dengan `CaptureController`, jadi hasil ini juga dipakai ulang saat
   /// shutter benar-benar ditekan (tidak menambah jumlah request).
   Future<void> _maybeUpdateLiveWatermarkData(LocationSnapshot snapshot) async {
-    final key = '${snapshot.latitude.toStringAsFixed(4)},${snapshot.longitude.toStringAsFixed(4)}';
+    final key =
+        '${snapshot.latitude.toStringAsFixed(4)},${snapshot.longitude.toStringAsFixed(4)}';
     if (key == _lastLiveGeoKey) return;
     _lastLiveGeoKey = key;
 
@@ -123,7 +129,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     if (config.showAddress || config.showLocationName) {
       final address = await fetchSafely(
-        () => _geocodingProvider.reverseGeocode(latitude: snapshot.latitude, longitude: snapshot.longitude),
+        () => _geocodingProvider.reverseGeocode(
+          latitude: snapshot.latitude,
+          longitude: snapshot.longitude,
+        ),
       );
       if (mounted) setState(() => _liveAddress = address);
     }
@@ -167,7 +176,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_cameraReady) return;
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
       _cameraService.pause();
       WakelockPlus.disable();
     } else if (state == AppLifecycleState.resumed) {
@@ -198,7 +208,11 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (!mounted) return;
     if (_captureController.status == CaptureStatus.error) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_captureController.errorMessage ?? 'Gagal mengambil foto.')),
+        SnackBar(
+          content: Text(
+            _captureController.errorMessage ?? 'Gagal mengambil foto.',
+          ),
+        ),
       );
       return;
     }
@@ -228,7 +242,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             ),
             IconButton(
               tooltip: 'Riwayat foto',
-              icon: const _RotatedControl(child: Icon(Icons.photo_library_outlined)),
+              icon: const _RotatedControl(
+                child: Icon(Icons.photo_library_outlined),
+              ),
               onPressed: () => Navigator.of(context).pushNamed('/history'),
             ),
           ],
@@ -236,28 +252,28 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         body: permissions == null
             ? const Center(child: CircularProgressIndicator())
             : permissions.allGranted
-                ? ChangeNotifierProvider.value(
-                    value: _captureController,
-                    child: _CameraBody(
-                      cameraReady: _cameraReady,
-                      controller: _cameraService.controller,
-                      liveLocation: _liveLocation,
-                      liveAddress: _liveAddress,
-                      liveMap: _liveMap,
-                      showSavedBanner: _showSavedBanner,
-                      hasMultipleCameras: _cameraService.hasMultipleCameras,
-                      onSwitchCamera: () async {
-                        await _cameraService.switchCamera();
-                        setState(() {});
-                      },
-                      onShutterPressed: _onShutterPressed,
-                    ),
-                  )
-                : _PermissionGate(
-                    permissions: permissions,
-                    onRequestPermissions: _requestMissingPermissions,
-                    onOpenSettings: _appPermissions.openSettings,
-                  ),
+            ? ChangeNotifierProvider.value(
+                value: _captureController,
+                child: _CameraBody(
+                  cameraReady: _cameraReady,
+                  controller: _cameraService.controller,
+                  liveLocation: _liveLocation,
+                  liveAddress: _liveAddress,
+                  liveMap: _liveMap,
+                  showSavedBanner: _showSavedBanner,
+                  hasMultipleCameras: _cameraService.hasMultipleCameras,
+                  onSwitchCamera: () async {
+                    await _cameraService.switchCamera();
+                    setState(() {});
+                  },
+                  onShutterPressed: _onShutterPressed,
+                ),
+              )
+            : _PermissionGate(
+                permissions: permissions,
+                onRequestPermissions: _requestMissingPermissions,
+                onOpenSettings: _appPermissions.openSettings,
+              ),
       ),
     );
   }
@@ -300,7 +316,8 @@ class _PermissionGate extends StatelessWidget {
   /// apakah izin ditolak permanen (harus buka Settings) atau belum diminta.
   @override
   Widget build(BuildContext context) {
-    final permanentlyDenied = permissions.camera == AppPermissionState.permanentlyDenied ||
+    final permanentlyDenied =
+        permissions.camera == AppPermissionState.permanentlyDenied ||
         permissions.location == AppPermissionState.permanentlyDenied;
 
     return Center(
@@ -318,8 +335,12 @@ class _PermissionGate extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: permanentlyDenied ? onOpenSettings : onRequestPermissions,
-              child: Text(permanentlyDenied ? 'Buka Pengaturan' : 'Berikan Izin'),
+              onPressed: permanentlyDenied
+                  ? onOpenSettings
+                  : onRequestPermissions,
+              child: Text(
+                permanentlyDenied ? 'Buka Pengaturan' : 'Berikan Izin',
+              ),
             ),
           ],
         ),
@@ -359,57 +380,98 @@ class _CameraBody extends StatelessWidget {
     final session = captureController.lastSession;
     final quarterTurns = context.watch<DeviceRotationController>().quarterTurns;
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (cameraReady && controller != null)
-          Center(child: CameraPreview(controller!))
-        else
-          const Center(child: CircularProgressIndicator()),
-        LiveWatermarkOverlay(
-          location: liveLocation,
-          address: liveAddress,
-          mapThumbnailBytes: liveMap?.imageBytes,
-        ),
-        if (session != null && showSavedBanner)
-          EdgeAnchoredRotated(
-            targetEdge: ScreenEdge.top,
-            quarterTurns: quarterTurns,
-            margin: 16,
-            child: _LastCaptureBanner(session: captureController),
-          ),
-        Positioned(
-          bottom: 24,
-          left: 0,
-          right: 0,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (hasMultipleCameras)
-                IconButton(
-                  tooltip: 'Ganti kamera',
-                  iconSize: 28,
-                  color: Colors.white,
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.black.withValues(alpha: 0.5),
-                    padding: const EdgeInsets.all(12),
-                  ),
-                  icon: const _RotatedControl(child: Icon(Icons.cameraswitch_outlined)),
-                  onPressed: onSwitchCamera,
-                ),
-              const SizedBox(width: 24),
-              _RotatedControl(
-                child: _ShutterButton(
-                  busy: captureController.status == CaptureStatus.capturing,
-                  onPressed: cameraReady ? onShutterPressed : null,
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final previewScale = _previewScale(constraints, controller);
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            if (cameraReady && controller != null)
+              Center(child: CameraPreview(controller!))
+            else
+              const Center(child: CircularProgressIndicator()),
+            LiveWatermarkOverlay(
+              location: liveLocation,
+              address: liveAddress,
+              mapThumbnailBytes: liveMap?.imageBytes,
+              previewScale: previewScale,
+              previewAreaSize: constraints.biggest,
+            ),
+            if (session != null && showSavedBanner)
+              EdgeAnchoredRotated(
+                targetEdge: ScreenEdge.top,
+                quarterTurns: quarterTurns,
+                margin: 16,
+                child: _LastCaptureBanner(session: captureController),
               ),
-              const SizedBox(width: 24 + 48),
-            ],
-          ),
-        ),
-      ],
+            Positioned(
+              bottom: 24,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (hasMultipleCameras)
+                    IconButton(
+                      tooltip: 'Ganti kamera',
+                      iconSize: 28,
+                      color: Colors.white,
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black.withValues(alpha: 0.5),
+                        padding: const EdgeInsets.all(12),
+                      ),
+                      icon: const _RotatedControl(
+                        child: Icon(Icons.cameraswitch_outlined),
+                      ),
+                      onPressed: onSwitchCamera,
+                    ),
+                  const SizedBox(width: 24),
+                  _RotatedControl(
+                    child: _ShutterButton(
+                      busy: captureController.status == CaptureStatus.capturing,
+                      onPressed: cameraReady ? onShutterPressed : null,
+                    ),
+                  ),
+                  const SizedBox(width: 24 + 48),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
+  }
+
+  /// Hitung faktor skala antara "1 piksel resolusi asli kamera" dan "1
+  /// logical pixel di layar", supaya ukuran panel watermark live (dirender
+  /// dalam logical pixel Flutter) bisa dibuat SEBANDING SECARA PROPORSI
+  /// dengan panel watermark hasil foto akhir (dirender `WatermarkRenderer`
+  /// dalam piksel gambar beresolusi tinggi) — tanpa penyesuaian ini, angka
+  /// ukuran yang sama (mis. fontSize 20) akan terlihat jauh lebih besar di
+  /// preview kecil dibanding di foto beresolusi tinggi.
+  ///
+  /// `CameraPreview` membesarkan diri mengikuti `controller.value.aspectRatio`
+  /// sampai sebesar mungkin di area yang tersedia (pola containment-fit
+  /// `AspectRatio` standar), jadi rasio (lebar preview di layar ÷
+  /// `previewSize.width`) adalah faktor skala yang konsisten, terlepas dari
+  /// orientasi sensor vs layar.
+  double _previewScale(
+    BoxConstraints constraints,
+    CameraController? controller,
+  ) {
+    final previewSize = controller?.value.previewSize;
+    if (controller == null || previewSize == null || previewSize.width <= 0) {
+      return 1.0;
+    }
+
+    final aspectRatio = controller.value.aspectRatio;
+    final onScreenWidth =
+        constraints.maxWidth / constraints.maxHeight > aspectRatio
+        ? constraints.maxHeight * aspectRatio
+        : constraints.maxWidth;
+
+    return onScreenWidth / previewSize.width;
   }
 }
 
@@ -438,8 +500,16 @@ class _ShutterButton extends StatelessWidget {
           ),
           padding: const EdgeInsets.all(6),
           child: Container(
-            decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
-            child: busy ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator()) : null,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white,
+            ),
+            child: busy
+                ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: CircularProgressIndicator(),
+                  )
+                : null,
           ),
         ),
       ),
@@ -458,7 +528,10 @@ class _LastCaptureBanner extends StatelessWidget {
     final capture = session.lastSession;
     if (capture == null) return const SizedBox.shrink();
 
-    final formatted = DateFormat('dd MMM yyyy, HH:mm:ss', 'id_ID').format(capture.timestamp);
+    final formatted = DateFormat(
+      'dd MMM yyyy, HH:mm:ss',
+      'id_ID',
+    ).format(capture.timestamp);
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -470,11 +543,19 @@ class _LastCaptureBanner extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: Image.file(capture.processedImageFile, width: 40, height: 40, fit: BoxFit.cover),
+            child: Image.file(
+              capture.processedImageFile,
+              width: 40,
+              height: 40,
+              fit: BoxFit.cover,
+            ),
           ),
           const SizedBox(width: 8),
           Flexible(
-            child: Text('Tersimpan: $formatted', style: const TextStyle(color: Colors.white)),
+            child: Text(
+              'Tersimpan: $formatted',
+              style: const TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
