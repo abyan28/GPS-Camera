@@ -95,11 +95,20 @@ class LiveWatermarkOverlay extends StatelessWidget {
     final scale = previewScale * _liveScaleCalibration;
     final fontSize = config.fontSize * scale;
     final spacing = config.spacing * scale;
-    final thumbnailSize = config.thumbnailSize * scale;
     final cornerRadius = config.cornerRadius * scale;
     final margin = config.margin * scale;
     final innerPadding = _finalInnerPadding * scale;
     final maxWidth = isLandscape ? previewAreaSize.height * _landscapeMaxWidthFraction : _portraitMaxWidth;
+
+    // Batasi thumbnail supaya TIDAK PERNAH lebih besar dari ruang yang
+    // tersisa di dalam `maxWidth` (dikurangi padding & spacing) — sebelum
+    // ini, thumbnail dihitung independen dari `maxWidth` sehingga pada
+    // kalibrasi ukuran yang besar, thumbnail sendirian bisa hampir/melebihi
+    // `maxWidth`, membuat baris (thumbnail + teks) meluber keluar kotak
+    // (indikator overflow kuning-hitam Flutter di mode debug).
+    final maxContentWidth = maxWidth - 2 * innerPadding;
+    final maxThumbnailSize = ((maxContentWidth - spacing) * 0.5).clamp(0.0, double.infinity);
+    final thumbnailSize = (config.thumbnailSize * scale).clamp(0.0, maxThumbnailSize);
 
     final lines = _buildLines(
       config,

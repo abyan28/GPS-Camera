@@ -173,11 +173,17 @@ class _CameraScreenState extends State<CameraScreen>
 
   /// Lepaskan kamera saat app masuk background, buka lagi saat app resume,
   /// supaya resource kamera tidak bocor atau bentrok dengan app lain.
+  ///
+  /// Sengaja HANYA bereaksi ke [AppLifecycleState.paused] (app benar-benar
+  /// di-background), BUKAN [AppLifecycleState.inactive] — `inactive` juga
+  /// terpicu sesaat oleh hal-hal transient seperti pengambilan screenshot
+  /// sistem, notification shade, atau dialog izin, yang sebelumnya membuat
+  /// kamera ikut di-dispose & diinisialisasi ulang tiap kejadian itu
+  /// (terlihat sebagai layar putih + ikon loading sekilas).
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_cameraReady) return;
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.paused) {
       _cameraService.pause();
       WakelockPlus.disable();
     } else if (state == AppLifecycleState.resumed) {
@@ -391,13 +397,19 @@ class _CameraBody extends StatelessWidget {
               Center(child: CameraPreview(controller!))
             else
               const Center(child: CircularProgressIndicator()),
-            LiveWatermarkOverlay(
-              location: liveLocation,
-              address: liveAddress,
-              mapThumbnailBytes: liveMap?.imageBytes,
-              previewScale: previewScale,
-              previewAreaSize: constraints.biggest,
-            ),
+            // Hanya tampilkan watermark live saat kamera benar-benar siap —
+            // saat kamera baru diinisialisasi ulang (mis. sesaat setelah
+            // sempat di-dispose), `previewScale` jatuh ke nilai fallback
+            // yang jauh lebih besar dari skala normal, membuat kotak
+            // sempat terlihat membesar sekilas sebelum kembali normal.
+            if (cameraReady && controller != null)
+              LiveWatermarkOverlay(
+                location: liveLocation,
+                address: liveAddress,
+                mapThumbnailBytes: liveMap?.imageBytes,
+                previewScale: previewScale,
+                previewAreaSize: constraints.biggest,
+              ),
             if (session != null && showSavedBanner)
               EdgeAnchoredRotated(
                 targetEdge: ScreenEdge.top,
