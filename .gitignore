@@ -54,3 +54,7 @@ app.*.map.json
 
 # Claude Code local session state (bukan bagian dari source project)
 .claude/
+
+# Screenshot/foto hasil uji manual di device (dokumentasi debugging pribadi,
+# bukan bagian dari source project)
+test/result/

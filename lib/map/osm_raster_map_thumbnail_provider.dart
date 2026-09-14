@@ -1,6 +1,6 @@
 import 'dart:math';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
@@ -91,11 +91,20 @@ class OsmRasterMapThumbnailProvider implements MapThumbnailProvider {
   /// Unduh satu raster tile PNG. Kembalikan null jika request gagal supaya
   /// pemanggil cukup melewati tile tersebut (thumbnail tetap terbentuk
   /// dengan area kosong daripada gagal total).
+  ///
+  /// Log ukuran body ikut dicatat karena tile server OSM kadang membalas
+  /// status 200 tapi isinya gambar "diblokir" pengganti (bukan HTTP error
+  /// biasa), yang hanya bisa dibedakan lewat ukuran body yang jauh lebih
+  /// kecil dari tile peta asli.
   Future<img.Image?> _fetchTile(int tileX, int tileY, int zoom) async {
     final uri = Uri.parse('https://tile.openstreetmap.org/$zoom/$tileX/$tileY.png');
     final response = await _client
         .get(uri, headers: {'User-Agent': _userAgent})
         .timeout(const Duration(seconds: 8));
+    debugPrint(
+      '[OsmRasterMapThumbnailProvider] tile $zoom/$tileX/$tileY status=${response.statusCode} '
+      'bytes=${response.bodyBytes.length}',
+    );
     if (response.statusCode != 200) return null;
     return img.decodePng(response.bodyBytes);
   }

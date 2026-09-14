@@ -66,8 +66,18 @@ dependencies:
   # Tulis metadata EXIF GPS/timestamp ke file JPG (Fase 12).
   native_exif: ^0.8.0
 
+  # Baca orientasi fisik device langsung dari sensor. Dibutuhkan karena
+  # CameraController.value.deviceOrientation milik package `camera`
+  # terbukti tidak ter-update dari default portraitUp pada device uji
+  # (bug plugin, bukan timing), sehingga butuh sumber orientasi independen.
+  native_device_orientation: ^2.1.3
+
   # Share foto lewat native share sheet (Fase 6/11 History).
   share_plus: ^10.1.2
+
+  # Cegah layar mati otomatis selagi preview kamera aktif, meniru perilaku
+  # aplikasi kamera pada umumnya.
+  wakelock_plus: ^1.2.10
 
 dev_dependencies:
   flutter_test:

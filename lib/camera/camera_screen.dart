@@ -4,19 +4,30 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../capture/capture_controller.dart';
+import '../core/network/safe_fetch.dart';
 import '../core/permissions/app_permissions.dart';
 import '../geocoding/cached_geocoding_provider.dart';
-import '../geocoding/nominatim_geocoding_provider.dart';
+import '../geocoding/locationiq_geocoding_provider.dart';
+import '../geocoding/models/address_snapshot.dart';
 import '../history/photo_history_service.dart';
 import '../location/location_service.dart';
 import '../location/models/location_snapshot.dart';
 import '../map/cached_map_thumbnail_provider.dart';
-import '../map/osm_raster_map_thumbnail_provider.dart';
+import '../map/locationiq_map_thumbnail_provider.dart';
+import '../map/models/map_snapshot.dart';
 import '../settings/settings_controller.dart';
 import '../storage/photo_storage_service.dart';
 import 'camera_controller_service.dart';
+import 'device_rotation_controller.dart';
+import 'edge_anchored_rotated.dart';
+import 'live_watermark_overlay.dart';
+
+/// Berapa lama banner "Tersimpan" tetap tampil setelah capture sukses,
+/// sebelum otomatis hilang sendiri.
+const _savedBannerDuration = Duration(seconds: 2);
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -29,12 +40,24 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   final _appPermissions = AppPermissions();
   final _cameraService = CameraControllerService();
   final _locationService = LocationService();
+
+  // Instance yang sama dipakai live-preview dan CaptureController, supaya
+  // cache geocoding/map terbagi (tidak dobel request ke LocationIQ).
+  final _geocodingProvider = CachedGeocodingProvider(LocationIqGeocodingProvider());
+  final _mapThumbnailProvider = CachedMapThumbnailProvider(LocationIqMapThumbnailProvider());
+  final _rotationController = DeviceRotationController();
+
   late final CaptureController _captureController;
 
   AppPermissionsSummary? _permissions;
   bool _cameraReady = false;
   LocationSnapshot? _liveLocation;
+  AddressSnapshot? _liveAddress;
+  MapSnapshot? _liveMap;
+  String? _lastLiveGeoKey;
   StreamSubscription<LocationSnapshot>? _locationSubscription;
+  bool _showSavedBanner = false;
+  Timer? _savedBannerTimer;
 
   /// Daftarkan observer lifecycle, siapkan capture controller, lalu mulai
   /// alur pengecekan izin.
@@ -47,8 +70,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       locationService: _locationService,
       cameraService: _cameraService,
       storageService: PhotoStorageService(),
-      geocodingProvider: CachedGeocodingProvider(NominatimGeocodingProvider()),
-      mapThumbnailProvider: CachedMapThumbnailProvider(OsmRasterMapThumbnailProvider()),
+      geocodingProvider: _geocodingProvider,
+      mapThumbnailProvider: _mapThumbnailProvider,
       historyService: PhotoHistoryService(),
       watermarkConfigProvider: () => settings.settings.watermark,
       saveOriginalProvider: () => settings.settings.saveOriginal,
@@ -70,15 +93,51 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Future<void> _startCameraAndLocation() async {
     await _cameraService.initialize();
     if (mounted) setState(() => _cameraReady = true);
+    // Cegah layar mati otomatis selagi preview kamera aktif, seperti
+    // aplikasi kamera pada umumnya.
+    await WakelockPlus.enable();
 
     _locationSubscription = _locationService.watchSnapshot().listen(
       (snapshot) {
         if (mounted) setState(() => _liveLocation = snapshot);
+        _maybeUpdateLiveWatermarkData(snapshot);
       },
       onError: (_) {
         // GPS mati/bermasalah: biarkan status tetap null, tampilkan fallback di UI.
       },
     );
+  }
+
+  /// Ambil alamat/map thumbnail untuk watermark live HANYA saat lokasi
+  /// berpindah ke titik yang "praktis berbeda" (presisi sama dengan
+  /// `CoordinateCache`), supaya tidak memicu request LocationIQ berulang
+  /// untuk pergerakan beberapa sentimeter. Memakai provider yang sama
+  /// dengan `CaptureController`, jadi hasil ini juga dipakai ulang saat
+  /// shutter benar-benar ditekan (tidak menambah jumlah request).
+  Future<void> _maybeUpdateLiveWatermarkData(LocationSnapshot snapshot) async {
+    final key = '${snapshot.latitude.toStringAsFixed(4)},${snapshot.longitude.toStringAsFixed(4)}';
+    if (key == _lastLiveGeoKey) return;
+    _lastLiveGeoKey = key;
+
+    final config = context.read<SettingsController>().settings.watermark;
+
+    if (config.showAddress || config.showLocationName) {
+      final address = await fetchSafely(
+        () => _geocodingProvider.reverseGeocode(latitude: snapshot.latitude, longitude: snapshot.longitude),
+      );
+      if (mounted) setState(() => _liveAddress = address);
+    }
+
+    if (config.showMapThumbnail) {
+      final map = await fetchSafely(
+        () => _mapThumbnailProvider.fetchThumbnail(
+          latitude: snapshot.latitude,
+          longitude: snapshot.longitude,
+          zoom: config.mapZoom,
+        ),
+      );
+      if (mounted) setState(() => _liveMap = map);
+    }
   }
 
   /// Minta izin kamera/lokasi yang belum diberikan, lalu mulai kamera dan
@@ -110,8 +169,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     if (!_cameraReady) return;
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
       _cameraService.pause();
+      WakelockPlus.disable();
     } else if (state == AppLifecycleState.resumed) {
       _cameraService.resume();
+      WakelockPlus.enable();
     }
   }
 
@@ -121,13 +182,17 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _locationSubscription?.cancel();
+    _savedBannerTimer?.cancel();
     _cameraService.dispose();
     _captureController.dispose();
+    _rotationController.dispose();
+    WakelockPlus.disable();
     super.dispose();
   }
 
   /// Jalankan capture saat tombol shutter ditekan, lalu tampilkan pesan
-  /// error via snackbar jika gagal.
+  /// error via snackbar jika gagal, atau banner "Tersimpan" (yang otomatis
+  /// hilang sendiri setelah [_savedBannerDuration]) jika berhasil.
   Future<void> _onShutterPressed() async {
     await _captureController.capture();
     if (!mounted) return;
@@ -135,7 +200,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(_captureController.errorMessage ?? 'Gagal mengambil foto.')),
       );
+      return;
     }
+
+    _savedBannerTimer?.cancel();
+    setState(() => _showSavedBanner = true);
+    _savedBannerTimer = Timer(_savedBannerDuration, () {
+      if (mounted) setState(() => _showSavedBanner = false);
+    });
   }
 
   /// Bangun tampilan utama: app bar dengan navigasi, lalu body berupa
@@ -143,45 +215,73 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     final permissions = _permissions;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Geotag Camera'),
-        actions: [
-          IconButton(
-            tooltip: 'Pengaturan',
-            icon: const Icon(Icons.settings),
-            onPressed: () => Navigator.of(context).pushNamed('/settings'),
-          ),
-          IconButton(
-            tooltip: 'Riwayat foto',
-            icon: const Icon(Icons.photo_library_outlined),
-            onPressed: () => Navigator.of(context).pushNamed('/history'),
-          ),
-        ],
-      ),
-      body: permissions == null
-          ? const Center(child: CircularProgressIndicator())
-          : permissions.allGranted
-              ? ChangeNotifierProvider.value(
-                  value: _captureController,
-                  child: _CameraBody(
-                    cameraReady: _cameraReady,
-                    controller: _cameraService.controller,
-                    liveLocation: _liveLocation,
-                    hasMultipleCameras: _cameraService.hasMultipleCameras,
-                    onSwitchCamera: () async {
-                      await _cameraService.switchCamera();
-                      setState(() {});
-                    },
-                    onShutterPressed: _onShutterPressed,
+    return ChangeNotifierProvider.value(
+      value: _rotationController,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Geotag Camera'),
+          actions: [
+            IconButton(
+              tooltip: 'Pengaturan',
+              icon: const _RotatedControl(child: Icon(Icons.settings)),
+              onPressed: () => Navigator.of(context).pushNamed('/settings'),
+            ),
+            IconButton(
+              tooltip: 'Riwayat foto',
+              icon: const _RotatedControl(child: Icon(Icons.photo_library_outlined)),
+              onPressed: () => Navigator.of(context).pushNamed('/history'),
+            ),
+          ],
+        ),
+        body: permissions == null
+            ? const Center(child: CircularProgressIndicator())
+            : permissions.allGranted
+                ? ChangeNotifierProvider.value(
+                    value: _captureController,
+                    child: _CameraBody(
+                      cameraReady: _cameraReady,
+                      controller: _cameraService.controller,
+                      liveLocation: _liveLocation,
+                      liveAddress: _liveAddress,
+                      liveMap: _liveMap,
+                      showSavedBanner: _showSavedBanner,
+                      hasMultipleCameras: _cameraService.hasMultipleCameras,
+                      onSwitchCamera: () async {
+                        await _cameraService.switchCamera();
+                        setState(() {});
+                      },
+                      onShutterPressed: _onShutterPressed,
+                    ),
+                  )
+                : _PermissionGate(
+                    permissions: permissions,
+                    onRequestPermissions: _requestMissingPermissions,
+                    onOpenSettings: _appPermissions.openSettings,
                   ),
-                )
-              : _PermissionGate(
-                  permissions: permissions,
-                  onRequestPermissions: _requestMissingPermissions,
-                  onOpenSettings: _appPermissions.openSettings,
-                ),
+      ),
     );
+  }
+}
+
+/// Bungkus [child] supaya berputar 90° per langkah mengikuti orientasi
+/// fisik device (lihat [DeviceRotationController]), sementara posisi
+/// widget di layar tidak berubah — pola standar kontrol aplikasi kamera.
+///
+/// Pakai [RotatedBox], bukan `Transform`/`AnimatedRotation`: `RotatedBox`
+/// menukar lebar/tinggi widget SAAT LAYOUT (bukan cuma saat menggambar),
+/// jadi kotak pembungkusnya ikut menyesuaikan dan tidak meluber keluar
+/// area yang dialokasikan `Positioned` — beda dengan `Transform.rotate`
+/// yang cuma memutar hasil gambarnya sehingga kontrol lebar (seperti
+/// badge status GPS) meluber jadi bar tipis memanjang saat diputar.
+class _RotatedControl extends StatelessWidget {
+  const _RotatedControl({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final quarterTurns = context.watch<DeviceRotationController>().quarterTurns;
+    return RotatedBox(quarterTurns: quarterTurns, child: child);
   }
 }
 
@@ -233,6 +333,9 @@ class _CameraBody extends StatelessWidget {
     required this.cameraReady,
     required this.controller,
     required this.liveLocation,
+    required this.liveAddress,
+    required this.liveMap,
+    required this.showSavedBanner,
     required this.hasMultipleCameras,
     required this.onSwitchCamera,
     required this.onShutterPressed,
@@ -241,16 +344,20 @@ class _CameraBody extends StatelessWidget {
   final bool cameraReady;
   final CameraController? controller;
   final LocationSnapshot? liveLocation;
+  final AddressSnapshot? liveAddress;
+  final MapSnapshot? liveMap;
+  final bool showSavedBanner;
   final bool hasMultipleCameras;
   final VoidCallback onSwitchCamera;
   final VoidCallback onShutterPressed;
 
-  /// Susun preview kamera, badge status GPS, banner hasil capture terakhir,
+  /// Susun preview kamera, watermark live, banner hasil capture terakhir,
   /// dan kontrol shutter/switch-kamera dalam satu stack.
   @override
   Widget build(BuildContext context) {
     final captureController = context.watch<CaptureController>();
     final session = captureController.lastSession;
+    final quarterTurns = context.watch<DeviceRotationController>().quarterTurns;
 
     return Stack(
       fit: StackFit.expand,
@@ -259,17 +366,16 @@ class _CameraBody extends StatelessWidget {
           Center(child: CameraPreview(controller!))
         else
           const Center(child: CircularProgressIndicator()),
-        Positioned(
-          top: 16,
-          left: 16,
-          right: 16,
-          child: _GpsStatusBadge(location: liveLocation),
+        LiveWatermarkOverlay(
+          location: liveLocation,
+          address: liveAddress,
+          mapThumbnailBytes: liveMap?.imageBytes,
         ),
-        if (session != null)
-          Positioned(
-            top: 72,
-            left: 16,
-            right: 16,
+        if (session != null && showSavedBanner)
+          EdgeAnchoredRotated(
+            targetEdge: ScreenEdge.top,
+            quarterTurns: quarterTurns,
+            margin: 16,
             child: _LastCaptureBanner(session: captureController),
           ),
         Positioned(
@@ -288,13 +394,15 @@ class _CameraBody extends StatelessWidget {
                     backgroundColor: Colors.black.withValues(alpha: 0.5),
                     padding: const EdgeInsets.all(12),
                   ),
-                  icon: const Icon(Icons.cameraswitch_outlined),
+                  icon: const _RotatedControl(child: Icon(Icons.cameraswitch_outlined)),
                   onPressed: onSwitchCamera,
                 ),
               const SizedBox(width: 24),
-              _ShutterButton(
-                busy: captureController.status == CaptureStatus.capturing,
-                onPressed: cameraReady ? onShutterPressed : null,
+              _RotatedControl(
+                child: _ShutterButton(
+                  busy: captureController.status == CaptureStatus.capturing,
+                  onPressed: cameraReady ? onShutterPressed : null,
+                ),
               ),
               const SizedBox(width: 24 + 48),
             ],
@@ -334,39 +442,6 @@ class _ShutterButton extends StatelessWidget {
             child: busy ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator()) : null,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _GpsStatusBadge extends StatelessWidget {
-  const _GpsStatusBadge({required this.location});
-
-  final LocationSnapshot? location;
-
-  /// Tampilkan badge status GPS: koordinat + kategori akurasi, atau pesan
-  /// "mencari lokasi" jika belum ada fix.
-  @override
-  Widget build(BuildContext context) {
-    final text = location == null
-        ? 'Mencari lokasi...'
-        : '${location!.latitude.toStringAsFixed(6)}, '
-            '${location!.longitude.toStringAsFixed(6)} '
-            '(${location!.accuracyCategory.label})';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.gps_fixed, color: Colors.white, size: 16),
-          const SizedBox(width: 8),
-          Flexible(child: Text(text, style: const TextStyle(color: Colors.white))),
-        ],
       ),
     );
   }

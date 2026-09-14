@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'geocoding_provider.dart';
@@ -46,16 +47,35 @@ class NominatimGeocodingProvider implements GeocodingProvider {
       final response = await _client
           .get(uri, headers: {'User-Agent': _userAgent})
           .timeout(const Duration(seconds: 8));
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        debugPrint(
+          '[NominatimGeocodingProvider] Gagal, status=${response.statusCode}, '
+          'body="${_shortSnippet(response.body)}"',
+        );
+        return null;
+      }
 
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final address = decoded['address'] as Map<String, dynamic>?;
-      if (address == null) return null;
+      if (address == null) {
+        debugPrint(
+          '[NominatimGeocodingProvider] Response 200 tapi tidak ada field '
+          '"address", body="${_shortSnippet(response.body)}"',
+        );
+        return null;
+      }
 
       return _mapToSnapshot(address);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[NominatimGeocodingProvider] Exception: $e');
       return null;
     }
+  }
+
+  /// Potong teks diagnostik supaya log tidak kebanjiran, cukup untuk
+  /// membaca pesan error tanpa mencatat body lengkap.
+  String _shortSnippet(String text) {
+    return text.length <= 200 ? text : '${text.substring(0, 200)}...';
   }
 
   /// Petakan field address Nominatim (yang bervariasi antar wilayah) ke

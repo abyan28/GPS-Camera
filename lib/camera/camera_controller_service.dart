@@ -1,4 +1,6 @@
 import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
+import 'package:native_device_orientation/native_device_orientation.dart';
 
 /// Membungkus package `camera`: daftar kamera, inisialisasi controller, dan
 /// switch kamera. Lifecycle (pause/resume saat app di-background) ditangani
@@ -39,13 +41,28 @@ class CameraControllerService {
     await controller.setFlashMode(mode);
   }
 
-  /// Ambil satu foto dari kamera yang sedang aktif.
+  /// Ambil satu foto dari kamera yang sedang aktif. Orientasi capture
+  /// dikunci HANYA sesaat di sekitar pemanggilan ini (bukan terus-menerus
+  /// selama kamera menyala) — mengunci terus-menerus terbukti membuat
+  /// CameraX ikut memutar tekstur PREVIEW secara berkelanjutan, bukan
+  /// cuma foto hasil. Sumber orientasinya tetap sensor independen
+  /// (`native_device_orientation`), bukan `controller.value.deviceOrientation`
+  /// milik package `camera` yang terbukti macet di `portraitUp`.
   Future<XFile> takePicture() async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) {
       throw StateError('Kamera belum siap.');
     }
-    return controller.takePicture();
+
+    final sensorOrientation = await NativeDeviceOrientationCommunicator().orientation(useSensor: true);
+    final deviceOrientation = sensorOrientation.deviceOrientation ?? DeviceOrientation.portraitUp;
+
+    await controller.lockCaptureOrientation(deviceOrientation);
+    try {
+      return await controller.takePicture();
+    } finally {
+      await controller.unlockCaptureOrientation();
+    }
   }
 
   /// Lepaskan resource kamera saat app masuk background. Controller akan
