@@ -58,3 +58,8 @@ app.*.map.json
 # Screenshot/foto hasil uji manual di device (dokumentasi debugging pribadi,
 # bukan bagian dari source project)
 test/result/
+
+# Aset referensi mentah (mis. logo sumber resolusi tinggi) yang dipakai
+# sekali untuk menurunkan aset asli project (lihat assets/icon/app_icon.png) —
+# bukan bagian dari source project.
+referensi/

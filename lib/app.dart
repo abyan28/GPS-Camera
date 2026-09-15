@@ -7,8 +7,8 @@ import 'history/history_screen.dart';
 import 'settings/settings_controller.dart';
 import 'settings/settings_screen.dart';
 
-class GeotagCameraApp extends StatelessWidget {
-  const GeotagCameraApp({super.key});
+class GeoPatriotApp extends StatelessWidget {
+  const GeoPatriotApp({super.key});
 
   /// Bangun root widget aplikasi: provider pengaturan global, tema, route
   /// awal, dan daftar navigasi.
@@ -17,9 +17,11 @@ class GeotagCameraApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => SettingsController(),
       child: MaterialApp(
-        title: 'Geotag Camera',
+        title: 'GeoPatriot',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        themeMode: ThemeMode.system,
         initialRoute: '/',
         routes: {
           '/': (context) => const CameraScreen(),

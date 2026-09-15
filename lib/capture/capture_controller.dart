@@ -108,9 +108,11 @@ class CaptureController extends ChangeNotifier {
         data: watermarkData,
         config: config,
       );
-      final processedFile = await _storageService.saveProcessed(processedBytes, baseName: baseName);
+      final stagingFile = await _storageService.saveProcessed(processedBytes, baseName: baseName);
 
-      await _writeExifSafely(processedFile, location, timestamp);
+      await _writeExifSafely(stagingFile, location, timestamp);
+
+      final processedFile = await _storageService.publishProcessedToGallery(stagingFile, baseName: baseName);
 
       if (!_saveOriginalProvider()) {
         await originalFile.delete();

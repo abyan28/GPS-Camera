@@ -12,4 +12,16 @@ class AppTheme {
       appBarTheme: const AppBarTheme(centerTitle: true),
     );
   }
+
+  /// Tema gelap, dipakai otomatis saat HP pengguna dalam mode gelap
+  /// (lihat `themeMode: ThemeMode.system` di `app.dart`) — mis. panel info
+  /// detail foto di Riwayat ikut jadi gelap, bukan selalu putih.
+  static ThemeData dark() {
+    return ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal, brightness: Brightness.dark),
+      appBarTheme: const AppBarTheme(centerTitle: true),
+    );
+  }
 }

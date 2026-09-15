@@ -1,15 +1,27 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Simpan foto ke galeri publik (Pictures/GeoPatriot) lewat package `gal`:
+         izin ini hanya berlaku sampai Android 9 (API 28), diabaikan otomatis
+         oleh Android 10+ yang sudah pakai scoped storage/MediaStore.
+         tools:replace dibutuhkan karena plugin `camera_android_camerax` juga
+         mendeklarasikan izin ini dengan maxSdkVersion berbeda (28) — nilai 29
+         dari `gal` yang dipakai (sesuai dokumentasi resminya). -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"
+        tools:replace="android:maxSdkVersion" />
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
-        android:label="geotag_camera"
+        android:label="GeoPatriot"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

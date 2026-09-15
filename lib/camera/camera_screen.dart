@@ -239,7 +239,7 @@ class _CameraScreenState extends State<CameraScreen>
       value: _rotationController,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Geotag Camera'),
+          title: const Text('GeoPatriot'),
           actions: [
             IconButton(
               tooltip: 'Pengaturan',
@@ -418,7 +418,10 @@ class _CameraBody extends StatelessWidget {
                 child: _LastCaptureBanner(session: captureController),
               ),
             Positioned(
-              bottom: 24,
+              // Jarak dari tepi bawah layar dinaikkan (semula 24) supaya
+              // tombol shutter/switch-kamera tidak terlalu mepet dengan
+              // bar navigasi sistem Android di bawahnya.
+              bottom: 48,
               left: 0,
               right: 0,
               child: Row(

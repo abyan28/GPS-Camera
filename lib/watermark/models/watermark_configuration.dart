@@ -23,7 +23,7 @@ class WatermarkConfiguration {
     required this.spacing,
     required this.mapZoom,
     this.customText,
-    this.appBrandingText = 'GPS Camera',
+    this.appBrandingText = 'GeoPatriot',
   });
 
   final bool showLocationName;

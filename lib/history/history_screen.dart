@@ -9,8 +9,8 @@ import 'models/history_entry.dart';
 import 'photo_history_service.dart';
 
 /// Layar riwayat foto: gallery grid dari [PhotoHistoryService], dengan
-/// detail, share, dan delete. Tidak memakai database server, hanya index
-/// JSON lokal.
+/// detail (swipe antar-foto), share, delete, dan pilih-banyak (tekan-tahan).
+/// Tidak memakai database server, hanya index JSON lokal.
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
 
@@ -23,6 +23,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
   final _storageService = PhotoStorageService();
 
   List<HistoryEntry>? _entries;
+  final Set<String> _selectedBaseNames = {};
+
+  bool get _isSelecting => _selectedBaseNames.isNotEmpty;
 
   @override
   void initState() {
@@ -36,38 +39,73 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (mounted) setState(() => _entries = entries);
   }
 
-  /// Hapus satu entri (file original+processed dan metadatanya) setelah
-  /// pengguna mengonfirmasi.
-  Future<void> _deleteEntry(HistoryEntry entry) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Hapus foto ini?'),
-        content: const Text('Foto original dan processed akan dihapus permanen.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Hapus')),
-        ],
-      ),
-    );
+  /// Masuk/toggle mode pilih-banyak lewat tekan-tahan salah satu foto.
+  void _toggleSelection(HistoryEntry entry) {
+    setState(() {
+      if (_selectedBaseNames.contains(entry.baseName)) {
+        _selectedBaseNames.remove(entry.baseName);
+      } else {
+        _selectedBaseNames.add(entry.baseName);
+      }
+    });
+  }
+
+  void _cancelSelection() {
+    setState(_selectedBaseNames.clear);
+  }
+
+  /// Hapus semua foto yang sedang dipilih di mode pilih-banyak.
+  Future<void> _deleteSelected() async {
+    final confirmed = await _confirmDelete(count: _selectedBaseNames.length);
     if (confirmed != true) return;
 
-    await _storageService.deleteByBaseName(entry.baseName);
-    await _historyService.remove(entry.baseName);
-    if (mounted) Navigator.of(context).pop();
+    for (final baseName in _selectedBaseNames) {
+      await _storageService.deleteByBaseName(baseName);
+      await _historyService.remove(baseName);
+    }
+    _selectedBaseNames.clear();
     await _loadEntries();
   }
 
-  /// Bagikan foto processed lewat native share sheet.
-  Future<void> _shareEntry(HistoryEntry entry) async {
-    await Share.shareXFiles([XFile(entry.processedPath)]);
+  Future<bool?> _confirmDelete({required int count}) {
+    final message = count == 1
+        ? 'Foto original dan processed akan dihapus permanen.'
+        : '$count foto (original dan processed) akan dihapus permanen.';
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(count == 1 ? 'Hapus foto ini?' : 'Hapus $count foto ini?'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bagikan semua foto yang sedang dipilih sekaligus lewat satu share sheet.
+  Future<void> _shareSelected() async {
+    final entries = _entries ?? [];
+    final files = entries
+        .where((entry) => _selectedBaseNames.contains(entry.baseName))
+        .map((entry) => XFile(entry.processedPath))
+        .toList();
+    if (files.isEmpty) return;
+    await Share.shareXFiles(files);
   }
 
   @override
   Widget build(BuildContext context) {
     final entries = _entries;
     return Scaffold(
-      appBar: AppBar(title: const Text('Riwayat Foto')),
+      appBar: _isSelecting ? _buildSelectionAppBar() : AppBar(title: const Text('Riwayat Foto')),
       body: entries == null
           ? const Center(child: CircularProgressIndicator())
           : entries.isEmpty
@@ -84,9 +122,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     itemCount: entries.length,
                     itemBuilder: (context, index) {
                       final entry = entries[index];
+                      final selected = _selectedBaseNames.contains(entry.baseName);
                       return _HistoryThumbnail(
                         entry: entry,
-                        onTap: () => _openDetail(entry),
+                        selected: selected,
+                        selectionMode: _isSelecting,
+                        onTap: () => _isSelecting ? _toggleSelection(entry) : _openDetail(entries, index),
+                        onLongPress: () => _toggleSelection(entry),
                       );
                     },
                   ),
@@ -94,17 +136,31 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
   }
 
-  /// Buka layar detail satu foto: preview besar, metadata, share, delete.
-  void _openDetail(HistoryEntry entry) {
-    Navigator.of(context).push(
+  AppBar _buildSelectionAppBar() {
+    return AppBar(
+      leading: IconButton(
+        tooltip: 'Batal pilih',
+        icon: const Icon(Icons.close),
+        onPressed: _cancelSelection,
+      ),
+      title: Text('${_selectedBaseNames.length} dipilih'),
+      actions: [
+        IconButton(tooltip: 'Bagikan', icon: const Icon(Icons.share_outlined), onPressed: _shareSelected),
+        IconButton(tooltip: 'Hapus', icon: const Icon(Icons.delete_outline), onPressed: _deleteSelected),
+      ],
+    );
+  }
+
+  /// Buka layar detail mulai dari foto ke-[initialIndex], dengan seluruh
+  /// [entries] supaya bisa swipe kiri/kanan pindah foto tanpa kembali ke grid.
+  void _openDetail(List<HistoryEntry> entries, int initialIndex) async {
+    await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => _HistoryDetailScreen(
-          entry: entry,
-          onDelete: () => _deleteEntry(entry),
-          onShare: () => _shareEntry(entry),
-        ),
+        builder: (context) => _HistoryDetailScreen(entries: entries, initialIndex: initialIndex),
       ),
     );
+    // Foto mungkin dihapus selagi di layar detail — muat ulang supaya grid selalu sinkron.
+    await _loadEntries();
   }
 }
 
@@ -135,60 +191,193 @@ class _EmptyHistory extends StatelessWidget {
 }
 
 class _HistoryThumbnail extends StatelessWidget {
-  const _HistoryThumbnail({required this.entry, required this.onTap});
+  const _HistoryThumbnail({
+    required this.entry,
+    required this.selected,
+    required this.selectionMode,
+    required this.onTap,
+    required this.onLongPress,
+  });
 
   final HistoryEntry entry;
+  final bool selected;
+  final bool selectionMode;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Image.file(File(entry.processedPath), fit: BoxFit.cover),
+      onLongPress: onLongPress,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(File(entry.processedPath), fit: BoxFit.cover),
+          ),
+          if (selectionMode)
+            Positioned(
+              top: 6,
+              right: 6,
+              child: CircleAvatar(
+                radius: 12,
+                backgroundColor: selected ? Theme.of(context).colorScheme.primary : Colors.black.withValues(alpha: 0.4),
+                child: Icon(
+                  selected ? Icons.check : Icons.circle_outlined,
+                  size: 16,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 }
 
-class _HistoryDetailScreen extends StatelessWidget {
-  const _HistoryDetailScreen({required this.entry, required this.onDelete, required this.onShare});
+/// Layar detail foto: `PageView` supaya bisa swipe kiri/kanan pindah foto
+/// tanpa kembali ke grid dulu. Foto ditampilkan di tengah layar (bukan
+/// nempel atas seperti sebelumnya) supaya foto landscape juga proporsional.
+/// Metadata (tanggal/koordinat/alamat) disembunyikan dulu dalam
+/// `DraggableScrollableSheet` yang bisa ditarik naik dari bawah — meniru
+/// pola Galeri Samsung — karena info yang sama sudah ada di watermark foto.
+class _HistoryDetailScreen extends StatefulWidget {
+  const _HistoryDetailScreen({required this.entries, required this.initialIndex});
 
-  final HistoryEntry entry;
-  final VoidCallback onDelete;
-  final VoidCallback onShare;
+  final List<HistoryEntry> entries;
+  final int initialIndex;
+
+  @override
+  State<_HistoryDetailScreen> createState() => _HistoryDetailScreenState();
+}
+
+class _HistoryDetailScreenState extends State<_HistoryDetailScreen> {
+  final _historyService = PhotoHistoryService();
+  final _storageService = PhotoStorageService();
+  late final PageController _pageController;
+  late List<HistoryEntry> _entries;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _entries = List.of(widget.entries);
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  HistoryEntry get _current => _entries[_currentIndex];
+
+  Future<void> _share() async {
+    await Share.shareXFiles([XFile(_current.processedPath)]);
+  }
+
+  /// Tampilkan detail (tanggal/koordinat/alamat) lewat modal bottom sheet,
+  /// cuma muncul saat ikon info diklik — supaya tidak menutupi foto secara
+  /// permanen (info yang sama sudah ada di watermark foto).
+  void _showInfo() {
+    final entry = _current;
+    final formattedDate = DateFormat('dd MMM yyyy, HH:mm:ss', 'id_ID').format(entry.timestamp);
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      // Material 3 membatasi lebar bottom sheet maks 640dp secara default,
+      // yang di beberapa device (logical width > 640dp) membuatnya tampak
+      // seperti kartu melayang dengan margin kiri-kanan alih-alih penuh
+      // selebar layar. Dipaksa selebar layar sesuai permintaan user.
+      constraints: const BoxConstraints(maxWidth: double.infinity),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(formattedDate, style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text('${entry.latitude.toStringAsFixed(6)}, ${entry.longitude.toStringAsFixed(6)}'),
+              if (entry.addressText != null && entry.addressText!.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(entry.addressText!),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Hapus foto yang sedang tampil. Kalau masih ada foto lain, lanjut ke
+  /// foto berikutnya (atau sebelumnya jika itu foto terakhir); kalau list
+  /// jadi kosong, otomatis kembali ke grid.
+  Future<void> _delete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus foto ini?'),
+        content: const Text('Foto original dan processed akan dihapus permanen.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final entry = _current;
+    await _storageService.deleteByBaseName(entry.baseName);
+    await _historyService.remove(entry.baseName);
+    if (!mounted) return;
+
+    final deletedIndex = _currentIndex;
+    setState(() {
+      _entries.removeAt(deletedIndex);
+      if (_entries.isNotEmpty && _currentIndex >= _entries.length) {
+        _currentIndex = _entries.length - 1;
+      }
+    });
+
+    if (_entries.isEmpty) {
+      Navigator.of(context).pop();
+    } else {
+      _pageController.jumpToPage(_currentIndex);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final formattedDate = DateFormat('dd MMM yyyy, HH:mm:ss', 'id_ID').format(entry.timestamp);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Detail Foto'),
         actions: [
-          IconButton(tooltip: 'Bagikan', icon: const Icon(Icons.share_outlined), onPressed: onShare),
-          IconButton(tooltip: 'Hapus', icon: const Icon(Icons.delete_outline), onPressed: onDelete),
+          IconButton(tooltip: 'Info foto', icon: const Icon(Icons.info_outline), onPressed: _showInfo),
+          IconButton(tooltip: 'Bagikan', icon: const Icon(Icons.share_outlined), onPressed: _share),
+          IconButton(tooltip: 'Hapus', icon: const Icon(Icons.delete_outline), onPressed: _delete),
         ],
       ),
-      body: ListView(
-        children: [
-          Image.file(File(entry.processedPath)),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(formattedDate, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Text('${entry.latitude.toStringAsFixed(6)}, ${entry.longitude.toStringAsFixed(6)}'),
-                if (entry.addressText != null && entry.addressText!.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(entry.addressText!),
-                ],
-              ],
-            ),
-          ),
-        ],
+      body: PageView.builder(
+        controller: _pageController,
+        itemCount: _entries.length,
+        onPageChanged: (index) => setState(() => _currentIndex = index),
+        itemBuilder: (context, index) {
+          return Center(
+            child: Image.file(File(_entries[index].processedPath), fit: BoxFit.contain),
+          );
+        },
       ),
     );
   }
