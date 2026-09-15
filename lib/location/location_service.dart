@@ -76,8 +76,16 @@ class LocationService {
       return _toSnapshot(position, isStale: false);
     } on Exception {
       final fallback = lastKnown ?? await Geolocator.getLastKnownPosition();
-      if (fallback == null) rethrow;
-      return _toSnapshot(fallback, isStale: true);
+      if (fallback != null) {
+        return _toSnapshot(fallback, isStale: true);
+      }
+      return LocationSnapshot(
+        latitude: 0.0,
+        longitude: 0.0,
+        accuracy: null,
+        capturedAt: DateTime.now(),
+        isStale: true,
+      );
     }
   }
 

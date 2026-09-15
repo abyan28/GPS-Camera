@@ -20,6 +20,9 @@ import '../map/locationiq_map_thumbnail_provider.dart';
 import '../map/models/map_snapshot.dart';
 import '../settings/settings_controller.dart';
 import '../storage/photo_storage_service.dart';
+import '../core/theme/camera_tokens.dart';
+import 'widgets/camera_bottom_bar.dart';
+import 'widgets/gps_status_pill.dart';
 import 'camera_controller_service.dart';
 import 'device_rotation_controller.dart';
 import 'edge_anchored_rotated.dart';
@@ -64,6 +67,7 @@ class _CameraScreenState extends State<CameraScreen>
   StreamSubscription<LocationSnapshot>? _locationSubscription;
   bool _showSavedBanner = false;
   Timer? _savedBannerTimer;
+  bool _isFlashing = false;
 
   // Zoom kamera sungguhan (hardware/optik lewat API resmi package `camera`,
   // BUKAN crop digital) — dikendalikan lewat ZoomRulerControl (drag) DAN
@@ -256,6 +260,11 @@ class _CameraScreenState extends State<CameraScreen>
   /// error via snackbar jika gagal, atau banner "Tersimpan" (yang otomatis
   /// hilang sendiri setelah [_savedBannerDuration]) jika berhasil.
   Future<void> _onShutterPressed() async {
+    setState(() => _isFlashing = true);
+    Future.delayed(const Duration(milliseconds: 70), () {
+      if (mounted) setState(() => _isFlashing = false);
+    });
+
     await _captureController.capture();
     if (!mounted) return;
     if (_captureController.status == CaptureStatus.error) {
@@ -276,31 +285,15 @@ class _CameraScreenState extends State<CameraScreen>
     });
   }
 
-  /// Bangun tampilan utama: app bar dengan navigasi, lalu body berupa
-  /// loading/permission gate/tampilan kamera tergantung status izin.
+  /// Bangun tampilan utama: layar kamera fullscreen immersive dengan
+  /// HUD mengambang, tanpa AppBar konvensional yang memotong viewfinder.
   @override
   Widget build(BuildContext context) {
     final permissions = _permissions;
     return ChangeNotifierProvider.value(
       value: _rotationController,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('GeoPatriot'),
-          actions: [
-            IconButton(
-              tooltip: 'Pengaturan',
-              icon: const _RotatedControl(child: Icon(Icons.settings)),
-              onPressed: () => Navigator.of(context).pushNamed('/settings'),
-            ),
-            IconButton(
-              tooltip: 'Riwayat foto',
-              icon: const _RotatedControl(
-                child: Icon(Icons.photo_library_outlined),
-              ),
-              onPressed: () => Navigator.of(context).pushNamed('/history'),
-            ),
-          ],
-        ),
+        backgroundColor: Colors.black,
         body: permissions == null
             ? const Center(child: CircularProgressIndicator())
             : permissions.allGranted
@@ -317,6 +310,7 @@ class _CameraScreenState extends State<CameraScreen>
                   minZoom: _minZoom,
                   maxZoom: _maxZoom,
                   currentZoom: _currentZoom,
+                  isFlashing: _isFlashing,
                   onScaleStart: _onScaleStart,
                   onScaleUpdate: _onScaleUpdate,
                   onRulerZoomChanged: _onRulerZoomChanged,
@@ -325,6 +319,8 @@ class _CameraScreenState extends State<CameraScreen>
                     setState(() {});
                   },
                   onShutterPressed: _onShutterPressed,
+                  onOpenGallery: () => Navigator.of(context).pushNamed('/history'),
+                  onOpenSettings: () => Navigator.of(context).pushNamed('/settings'),
                 ),
               )
             : _PermissionGate(
@@ -419,11 +415,14 @@ class _CameraBody extends StatelessWidget {
     required this.minZoom,
     required this.maxZoom,
     required this.currentZoom,
+    required this.isFlashing,
     required this.onScaleStart,
     required this.onScaleUpdate,
     required this.onRulerZoomChanged,
     required this.onSwitchCamera,
     required this.onShutterPressed,
+    required this.onOpenGallery,
+    required this.onOpenSettings,
   });
 
   final bool cameraReady;
@@ -436,14 +435,17 @@ class _CameraBody extends StatelessWidget {
   final double minZoom;
   final double maxZoom;
   final double currentZoom;
+  final bool isFlashing;
   final GestureScaleStartCallback onScaleStart;
   final GestureScaleUpdateCallback onScaleUpdate;
   final ValueChanged<double> onRulerZoomChanged;
   final VoidCallback onSwitchCamera;
   final VoidCallback onShutterPressed;
+  final VoidCallback onOpenGallery;
+  final VoidCallback onOpenSettings;
 
   /// Susun preview kamera, watermark live, banner hasil capture terakhir,
-  /// dan kontrol shutter/switch-kamera dalam satu stack.
+  /// floating top HUD, dan bottom control bar dalam satu stack.
   @override
   Widget build(BuildContext context) {
     final captureController = context.watch<CaptureController>();
@@ -457,6 +459,7 @@ class _CameraBody extends StatelessWidget {
         return Stack(
           fit: StackFit.expand,
           children: [
+            // 1. Preview Kamera
             if (cameraReady && controller != null)
               GestureDetector(
                 onScaleStart: onScaleStart,
@@ -465,11 +468,8 @@ class _CameraBody extends StatelessWidget {
               )
             else
               const Center(child: CircularProgressIndicator()),
-            // Hanya tampilkan watermark live saat kamera benar-benar siap —
-            // saat kamera baru diinisialisasi ulang (mis. sesaat setelah
-            // sempat di-dispose), `previewScale` jatuh ke nilai fallback
-            // yang jauh lebih besar dari skala normal, membuat kotak
-            // sempat terlihat membesar sekilas sebelum kembali normal.
+
+            // 2. Overlay Watermark Live
             if (cameraReady && controller != null)
               LiveWatermarkOverlay(
                 location: liveLocation,
@@ -478,48 +478,82 @@ class _CameraBody extends StatelessWidget {
                 previewScale: previewScale,
                 previewAreaSize: constraints.biggest,
               ),
+
+            // 3. Zoom Ruler
             if (cameraReady && maxZoom > minZoom)
               _buildZoomRuler(constraints, quarterTurns: quarterTurns),
+
+            // 4. Shutter Flash Effect
+            if (isFlashing)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Container(color: Colors.white.withValues(alpha: 0.65)),
+                ),
+              ),
+
+            // 5. Banner Notifikasi Tersimpan (Tappable ke Galeri)
             if (session != null && showSavedBanner)
               EdgeAnchoredRotated(
                 targetEdge: ScreenEdge.top,
                 quarterTurns: quarterTurns,
-                margin: 16,
-                child: _LastCaptureBanner(session: captureController),
+                margin: 68,
+                child: _LastCaptureBanner(
+                  session: captureController,
+                  onTap: onOpenGallery,
+                ),
               ),
+
+            // 6. Top Floating HUD (Pill Status GPS + Tombol Pengaturan)
             Positioned(
-              // Jarak dari tepi bawah layar dinaikkan (semula 24) supaya
-              // tombol shutter/switch-kamera tidak terlalu mepet dengan
-              // bar navigasi sistem Android di bawahnya.
-              bottom: 48,
+              top: 0,
               left: 0,
               right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (hasMultipleCameras)
-                    IconButton(
-                      tooltip: 'Ganti kamera',
-                      iconSize: 28,
-                      color: Colors.white,
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.black.withValues(alpha: 0.5),
-                        padding: const EdgeInsets.all(12),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _RotatedControl(
+                        child: GpsStatusPill(location: liveLocation),
                       ),
-                      icon: const _RotatedControl(
-                        child: Icon(Icons.cameraswitch_outlined),
+                      _RotatedControl(
+                        child: IconButton(
+                          tooltip: 'Pengaturan',
+                          style: IconButton.styleFrom(
+                            backgroundColor: CameraTokens.hudBackground,
+                            side: BorderSide(color: CameraTokens.hudBorder, width: 1),
+                            padding: const EdgeInsets.all(10),
+                          ),
+                          icon: const Icon(Icons.settings_outlined, color: Colors.white),
+                          onPressed: onOpenSettings,
+                        ),
                       ),
-                      onPressed: onSwitchCamera,
-                    ),
-                  const SizedBox(width: 24),
-                  _RotatedControl(
-                    child: _ShutterButton(
-                      busy: captureController.status == CaptureStatus.capturing,
-                      onPressed: cameraReady ? onShutterPressed : null,
-                    ),
+                    ],
                   ),
-                  const SizedBox(width: 24 + 48),
-                ],
+                ),
+              ),
+            ),
+
+            // 7. Bottom Control Bar (Galeri + Shutter + Switch Camera)
+            // Baris tombol kontrol bawah tetap berada di sisi fisik bawah layar
+            // (bottom: 32) agar tombol rana nyaman dijangkau jempol di kedua
+            // orientasi, sementara ikon-ikon di dalamnya berputar di tempat
+            // (in-place) tanpa memutar kontainer baris menjadi kolom vertikal.
+            Positioned(
+              bottom: 32,
+              left: 0,
+              right: 0,
+              child: CameraBottomBar(
+                quarterTurns: quarterTurns,
+                cameraReady: cameraReady,
+                busy: captureController.status == CaptureStatus.capturing,
+                hasMultipleCameras: hasMultipleCameras,
+                lastCapturedFile: session?.processedImageFile,
+                onShutterPressed: onShutterPressed,
+                onSwitchCamera: onSwitchCamera,
+                onOpenGallery: onOpenGallery,
               ),
             ),
           ],
@@ -606,89 +640,62 @@ class _CameraBody extends StatelessWidget {
   }
 }
 
-class _ShutterButton extends StatelessWidget {
-  const _ShutterButton({required this.busy, required this.onPressed});
-
-  final bool busy;
-  final VoidCallback? onPressed;
-
-  /// Tombol shutter bulat dengan label semantik untuk screen reader dan
-  /// indikator loading saat sedang memproses capture.
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      enabled: !busy && onPressed != null,
-      label: busy ? 'Sedang mengambil foto' : 'Ambil foto',
-      child: GestureDetector(
-        onTap: busy ? null : onPressed,
-        child: Container(
-          width: 72,
-          height: 72,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 4),
-          ),
-          padding: const EdgeInsets.all(6),
-          child: Container(
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.white,
-            ),
-            child: busy
-                ? const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: CircularProgressIndicator(),
-                  )
-                : null,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _LastCaptureBanner extends StatelessWidget {
-  const _LastCaptureBanner({required this.session});
+  const _LastCaptureBanner({required this.session, required this.onTap});
 
   final CaptureController session;
+  final VoidCallback onTap;
 
-  /// Tampilkan banner timestamp foto terakhir yang berhasil disimpan.
+  /// Tampilkan banner foto terakhir yang berhasil disimpan dan dapat diketuk
+  /// untuk langsung membuka galeri foto.
   @override
   Widget build(BuildContext context) {
     final capture = session.lastSession;
     if (capture == null) return const SizedBox.shrink();
 
     final formatted = DateFormat(
-      'dd MMM yyyy, HH:mm:ss',
+      'HH:mm:ss',
       'id_ID',
     ).format(capture.timestamp);
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: Image.file(
-              capture.processedImageFile,
-              width: 40,
-              height: 40,
-              fit: BoxFit.cover,
-            ),
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: CameraTokens.hudBackground,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: CameraTokens.hudBorder, width: 1),
           ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              'Tersimpan: $formatted',
-              style: const TextStyle(color: Colors.white),
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.file(
+                  capture.processedImageFile,
+                  width: 28,
+                  height: 28,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Tersimpan $formatted (Buka)',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, size: 16, color: Colors.white70),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

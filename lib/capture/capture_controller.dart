@@ -125,11 +125,16 @@ class CaptureController extends ChangeNotifier {
         map: map,
       );
       final appIconBytes = await _loadAppIconBytes();
-      final processedBytes = _watermarkRenderer.render(
-        sourceImageBytes: await stagingOriginal.readAsBytes(),
-        data: watermarkData,
-        config: config,
-        appIconBytes: appIconBytes,
+      final sourceBytes = await stagingOriginal.readAsBytes();
+      final processedBytes = await compute(
+        _renderWatermarkInIsolate,
+        _WatermarkRenderPayload(
+          sourceImageBytes: sourceBytes,
+          data: watermarkData,
+          config: config,
+          appIconBytes: appIconBytes,
+          renderer: _watermarkRenderer,
+        ),
       );
       final stagingProcessed = await _storageService.saveProcessed(processedBytes, baseName: baseName);
 
@@ -194,4 +199,33 @@ class CaptureController extends ChangeNotifier {
         .where((component) => component != null && component.isNotEmpty)
         .join(', ');
   }
+}
+
+/// Payload data untuk eksekusi render watermark di background isolate.
+class _WatermarkRenderPayload {
+  const _WatermarkRenderPayload({
+    required this.sourceImageBytes,
+    required this.data,
+    required this.config,
+    this.appIconBytes,
+    this.renderer,
+  });
+
+  final Uint8List sourceImageBytes;
+  final WatermarkData data;
+  final WatermarkConfiguration config;
+  final Uint8List? appIconBytes;
+  final WatermarkRenderer? renderer;
+}
+
+/// Fungsi top-level untuk rendering watermark di isolate terpisah via [compute],
+/// mencegah freeze/jank pada UI thread saat mengolah foto resolusi tinggi.
+Uint8List _renderWatermarkInIsolate(_WatermarkRenderPayload payload) {
+  final renderer = payload.renderer ?? WatermarkRenderer();
+  return renderer.render(
+    sourceImageBytes: payload.sourceImageBytes,
+    data: payload.data,
+    config: payload.config,
+    appIconBytes: payload.appIconBytes,
+  );
 }

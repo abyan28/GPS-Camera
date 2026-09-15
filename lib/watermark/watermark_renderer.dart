@@ -205,6 +205,9 @@ class WatermarkRenderer {
   }
 
   String _coordinatesText(LocationSnapshot location) {
+    if (location.latitude == 0.0 && location.longitude == 0.0 && location.accuracy == null) {
+      return 'Mencari sinyal GPS...';
+    }
     return '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
   }
 

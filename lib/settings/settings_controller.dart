@@ -40,6 +40,30 @@ class SettingsController extends ChangeNotifier {
     await _update(settings.copyWith(saveOriginal: value));
   }
 
+  /// Deteksi template aktif berdasarkan kecocokan konfigurasi field data watermark saat ini.
+  WatermarkTemplate? get activeTemplate {
+    for (final template in WatermarkTemplate.values) {
+      final config = template.configuration;
+      if (settings.watermark.showLocationName == config.showLocationName &&
+          settings.watermark.showAddress == config.showAddress &&
+          settings.watermark.showCoordinates == config.showCoordinates &&
+          settings.watermark.showDate == config.showDate &&
+          settings.watermark.showTime == config.showTime &&
+          settings.watermark.showTimezone == config.showTimezone &&
+          settings.watermark.showAccuracy == config.showAccuracy &&
+          settings.watermark.showAltitude == config.showAltitude &&
+          settings.watermark.showMapThumbnail == config.showMapThumbnail) {
+        return template;
+      }
+    }
+    return null;
+  }
+
+  /// Kembalikan seluruh pengaturan ke setelan awal default pabrik.
+  Future<void> resetToDefaults() async {
+    await _update(AppSettings.defaults());
+  }
+
   Future<void> _update(AppSettings updated) async {
     settings = updated;
     notifyListeners();

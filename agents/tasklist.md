@@ -1,6 +1,6 @@
 # Tasklist — GPS Map Camera
 
-Progress: 87% (Fase 0-13 dari 14 fase inti di `workflow-free-first.md` selesai; Fase 14 opsional sengaja tidak dikerjakan, Fase 15 checklist rilis manual belum dikerjakan)
+Progress: 95% (Fase 0-13 selesai; Fase Redesign UI/UX komprehensif selesai; Fase 14 opsional sengaja tidak dikerjakan, Fase 15 checklist rilis manual belum dikerjakan)
 
 Mengacu ke `agents/workflow-free-first.md`. Centang `[✓]` + ✅ setiap fase/task selesai, dengan catatan file yang dibuat/diubah. AI wajib update file ini setiap selesai satu task, sebelum melapor ke user (lihat `prd-free-first.md` §22).
 
@@ -316,5 +316,28 @@ Mengacu ke `agents/workflow-free-first.md`. Centang `[✓]` + ✅ setiap fase/ta
   * `assets/icon/app_icon.png`: di-crop ketat ke bounding box lingkaran lalu diskalakan ulang supaya lingkaran mengisi ~96% kanvas (dicek dulu render di atas latar magenta, hasilnya rapi tanpa terpotong) — dijalankan ulang `dart run flutter_launcher_icons` untuk regenerate semua ikon Android
   * Kotak watermark live masih bersinggungan dengan tombol shutter di device nyata walau sudah diberi jarak sebelumnya — `lib/camera/live_watermark_overlay.dart`: `_bottomControlsClearance` dinaikkan dari 112 → 170
   * Tema gelap: `lib/core/theme/app_theme.dart` tambah `AppTheme.dark()`; `lib/app.dart` tambah `darkTheme: AppTheme.dark()` + `themeMode: ThemeMode.system` — otomatis ikut mode gelap/terang sistem HP (termasuk panel info detail foto yang sebelumnya selalu putih)
-  * Panel info detail foto tampak seperti kartu melayang dengan margin kiri-kanan, bukan penuh selebar layar — root cause DIKONFIRMASI dari baca source Flutter (`bottom_sheet.dart`): Material 3 membatasi lebar bottom sheet default maks 640dp, kena di device dengan logical width >640dp. `lib/history/history_screen.dart`: `showModalBottomSheet` tambah `constraints: BoxConstraints(maxWidth: double.infinity)` supaya selalu selebar layar
+  * Panel info detail foto tampak seperti kartu melayang dengan margin kiri-kanan, bukan penuh selebar layar — root cause DIKONFIRMASI dari baca source Flutter (`bottom_sheet.dart`): Material 3 membatasi lebar bottom sheet default maks 640dp, kena di device dengan logical width >640dp.
+  * `lib/history/history_screen.dart`: `showModalBottomSheet` tambah `constraints: BoxConstraints(maxWidth: double.infinity)` supaya selalu selebar layar
   * VERIFIKASI: `flutter analyze` bersih, `flutter test` 26/26 lolos; BELUM diverifikasi ulang di device fisik oleh user
+
+## Fase Redesign UI/UX Komprehensif — Immersive HUD, Anti-Lag Isolate, & Polish
+- [✓] ✅ Redesign UI/UX Menyeluruh: Edge-to-edge HUD, Background Watermarking, Live Settings Preview, Pinch-to-Zoom (Selesai)
+  * **Viewfinder Edge-to-Edge & Floating HUD**: Menghapus `AppBar` konvensional di `CameraScreen`. Menambahkan top floating HUD berisi `GpsStatusPill` (indikator real-time dengan kode warna akurasi dan modal info sensor) dan tombol `Settings` mengambang.
+  * **Ergonomi Bottom Bar**: Membuat `CameraBottomBar` yang menata tiga kontrol thumb-zone: akses galeri foto terakhir cepat (kiri), tombol shutter besar 76dp beranimasi tekan (tengah), dan switch kamera (kanan). Banner tersimpan dibuat interaktif (tappable langsung ke detail foto).
+  * **Anti-Lag Background Isolate**: Pemrosesan CPU berat `WatermarkRenderer.render` dipindahkan ke background worker isolate menggunakan `compute()` di `CaptureController`, menghilangkan jank/freeze thread UI saat memotret foto beresolusi tinggi.
+  * **Graceful GPS Timeout**: `LocationService.freezeSnapshot` dan `WatermarkRenderer` diperbarui agar saat pencarian satelit timeout atau koordinat belum terkunci, aplikasi tidak memblokir capture melainkan tetap mengambil foto dengan fallback yang aman.
+  * **Progressive Disclosure & Live Preview di Settings**: Menambahkan kartu pratinjau live watermark reaktif di bagian atas `SettingsScreen`, memperbaiki status aktif template chip (`selected: activeTemplate == template`), input catatan lapangan tersinkronisasi `onChanged`, pengelompokan Card terstruktur, dan tombol "Kembalikan ke Setelan Awal".
+  * **Galeri & Detail Foto**: Menambahkan `InteractiveViewer` pada `HistoryDetailScreen` (mendukung pinch-to-zoom hingga 4x), `errorBuilder` fallback pada thumbnail dan foto detail jika file terhapus di luar aplikasi, tombol seleksi "Pilih" eksplisit di AppBar, judul dinamis indeks foto (`Foto X dari Y`), penyesuaian dialog konfirmasi hapus ramah pengguna, dan tombol "Salin Koordinat" di info modal.
+  * **Design Tokens & Theme**: Menambahkan `CameraTokens` di `lib/core/theme/camera_tokens.dart` dan menyelaraskan tema gelap di `lib/core/theme/app_theme.dart`.
+  * **File Baru**: `lib/core/theme/camera_tokens.dart`, `lib/camera/widgets/gps_status_pill.dart`, `lib/camera/widgets/camera_bottom_bar.dart`, `test/settings_controller_test.dart`.
+  * **File Diubah**: `lib/core/theme/app_theme.dart`, `lib/capture/capture_controller.dart`, `lib/location/location_service.dart`, `lib/watermark/watermark_renderer.dart`, `lib/settings/settings_controller.dart`, `lib/settings/settings_screen.dart`, `lib/history/history_screen.dart`, `lib/camera/camera_screen.dart`.
+  * VERIFIKASI: `flutter analyze` 0 issues (bersih), `flutter test` 34/34 tests lolos.
+
+## Fase Perbaikan Bug Landscape Layout — In-Place Icon Rotation & Zero Overlap
+- [✓] ✅ Fix Bug Layout Kamera Landscape: Penumpukan Bottom Bar & Zoom Ruler (Selesai)
+  * **Root Cause Ditemukan**: `CameraBottomBar` sebelumnya dibungkus oleh `_RotatedControl` (`RotatedBox`) di `lib/camera/camera_screen.dart`. Ketika device dimiringkan ke mode landscape (`quarterTurns = 1` atau `3`), `RotatedBox` memutar kontainer baris selebar layar penuh tersebut sebesar 90°, mengubah baris horizontal menjadi kolom vertikal di tengah layar yang menabrak dan menimpa penggaris zoom (`ZoomRulerControl`) membentuk palang silang (+).
+  * **In-Place Icon Rotation**: Menghapus pembungkus `_RotatedControl` dari `CameraBottomBar` di `camera_screen.dart` sehingga baris kontrol bawah tetap berlabuh stabil di sisi fisik bawah layar (`bottom: 32`). Menambahkan parameter `quarterTurns` ke `CameraBottomBar` dan merotasikan isi ikon/gambar di tempat (*in-place*) pada `_QuickGalleryButton` (thumbnail galeri) dan `IconButton` (ganti kamera).
+  * **Zero Collision**: Dengan `CameraBottomBar` pada `bottom: 32` (tinggi 76dp) dan `ZoomRulerControl` pada `bottom: 140` (tinggi 32dp), tercipta jarak klirens bersih sebesar 32dp di antara keduanya saat mode landscape, menghilangkan tumpang tindih secara permanen.
+  * **File Diubah**: `lib/camera/camera_screen.dart`, `lib/camera/widgets/camera_bottom_bar.dart`.
+  * **File Baru**: `test/camera_bottom_bar_test.dart` (pengujian widget untuk kestabilan baris horizontal di portrait & landscape, rotasi in-place, disabled state saat busy, dan single-camera layout).
+  * **VERIFIKASI**: `flutter analyze` 0 issues (bersih), `flutter test` 38/38 tests lolos (100% pass).

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -9,8 +10,7 @@ import 'models/history_entry.dart';
 import 'photo_history_service.dart';
 
 /// Layar riwayat foto: gallery grid dari [PhotoHistoryService], dengan
-/// detail (swipe antar-foto), share, delete, dan pilih-banyak (tekan-tahan).
-/// Tidak memakai database server, hanya index JSON lokal.
+/// detail (swipe antar-foto, pinch-to-zoom), share, delete, dan pilih-banyak.
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
 
@@ -39,7 +39,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (mounted) setState(() => _entries = entries);
   }
 
-  /// Masuk/toggle mode pilih-banyak lewat tekan-tahan salah satu foto.
+  /// Masuk/toggle mode pilih-banyak lewat tekan-tahan atau tombol pilih.
   void _toggleSelection(HistoryEntry entry) {
     setState(() {
       if (_selectedBaseNames.contains(entry.baseName)) {
@@ -69,8 +69,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Future<bool?> _confirmDelete({required int count}) {
     final message = count == 1
-        ? 'Foto original dan processed akan dihapus permanen.'
-        : '$count foto (original dan processed) akan dihapus permanen.';
+        ? 'Foto asli dan foto ber-watermark akan dihapus permanen.'
+        : '$count foto (foto asli dan foto ber-watermark) akan dihapus permanen.';
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -83,6 +83,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Hapus'),
           ),
         ],
@@ -105,7 +106,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget build(BuildContext context) {
     final entries = _entries;
     return Scaffold(
-      appBar: _isSelecting ? _buildSelectionAppBar() : AppBar(title: const Text('Riwayat Foto')),
+      appBar: _isSelecting ? _buildSelectionAppBar() : _buildNormalAppBar(entries),
       body: entries == null
           ? const Center(child: CircularProgressIndicator())
           : entries.isEmpty
@@ -133,6 +134,20 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     },
                   ),
                 ),
+    );
+  }
+
+  AppBar _buildNormalAppBar(List<HistoryEntry>? entries) {
+    return AppBar(
+      title: const Text('Riwayat Foto'),
+      actions: [
+        if (entries != null && entries.isNotEmpty)
+          TextButton.icon(
+            onPressed: () => _toggleSelection(entries.first),
+            icon: const Icon(Icons.checklist, size: 18),
+            label: const Text('Pilih'),
+          ),
+      ],
     );
   }
 
@@ -175,12 +190,12 @@ class _EmptyHistory extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.photo_library_outlined, size: 48),
-            const SizedBox(height: 12),
+            Icon(Icons.photo_library_outlined, size: 56, color: Theme.of(context).hintColor),
+            const SizedBox(height: 16),
             Text('Belum ada foto', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             const Text(
-              'Foto yang Anda ambil akan muncul di sini.',
+              'Foto ber-watermark yang Anda ambil akan tersimpan dan tampil di sini.',
               textAlign: TextAlign.center,
             ),
           ],
@@ -215,7 +230,19 @@ class _HistoryThumbnail extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.file(File(entry.processedPath), fit: BoxFit.cover),
+            child: Image.file(
+              File(entry.processedPath),
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade900,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Center(
+                  child: Icon(Icons.broken_image_outlined, color: Colors.white54),
+                ),
+              ),
+            ),
           ),
           if (selectionMode)
             Positioned(
@@ -223,7 +250,7 @@ class _HistoryThumbnail extends StatelessWidget {
               right: 6,
               child: CircleAvatar(
                 radius: 12,
-                backgroundColor: selected ? Theme.of(context).colorScheme.primary : Colors.black.withValues(alpha: 0.4),
+                backgroundColor: selected ? Theme.of(context).colorScheme.primary : Colors.black.withValues(alpha: 0.5),
                 child: Icon(
                   selected ? Icons.check : Icons.circle_outlined,
                   size: 16,
@@ -237,12 +264,8 @@ class _HistoryThumbnail extends StatelessWidget {
   }
 }
 
-/// Layar detail foto: `PageView` supaya bisa swipe kiri/kanan pindah foto
-/// tanpa kembali ke grid dulu. Foto ditampilkan di tengah layar (bukan
-/// nempel atas seperti sebelumnya) supaya foto landscape juga proporsional.
-/// Metadata (tanggal/koordinat/alamat) disembunyikan dulu dalam
-/// `DraggableScrollableSheet` yang bisa ditarik naik dari bawah — meniru
-/// pola Galeri Samsung — karena info yang sama sudah ada di watermark foto.
+/// Layar detail foto: `PageView` supaya bisa swipe kiri/kanan pindah foto,
+/// dengan `InteractiveViewer` untuk pinch-to-zoom foto & membaca watermark detail.
 class _HistoryDetailScreen extends StatefulWidget {
   const _HistoryDetailScreen({required this.entries, required this.initialIndex});
 
@@ -281,33 +304,55 @@ class _HistoryDetailScreenState extends State<_HistoryDetailScreen> {
   }
 
   /// Tampilkan detail (tanggal/koordinat/alamat) lewat modal bottom sheet,
-  /// cuma muncul saat ikon info diklik — supaya tidak menutupi foto secara
-  /// permanen (info yang sama sudah ada di watermark foto).
+  /// dengan tombol salin koordinat cepat ke clipboard.
   void _showInfo() {
     final entry = _current;
-    final formattedDate = DateFormat('dd MMM yyyy, HH:mm:ss', 'id_ID').format(entry.timestamp);
+    final formattedDate = DateFormat('dd MMMM yyyy, HH:mm:ss', 'id_ID').format(entry.timestamp);
+    final coordText = '${entry.latitude.toStringAsFixed(6)}, ${entry.longitude.toStringAsFixed(6)}';
+
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      // Material 3 membatasi lebar bottom sheet maks 640dp secara default,
-      // yang di beberapa device (logical width > 640dp) membuatnya tampak
-      // seperti kartu melayang dengan margin kiri-kanan alih-alih penuh
-      // selebar layar. Dipaksa selebar layar sesuai permintaan user.
       constraints: const BoxConstraints(maxWidth: double.infinity),
       builder: (context) {
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(formattedDate, style: Theme.of(context).textTheme.titleMedium),
-              const SizedBox(height: 8),
-              Text('${entry.latitude.toStringAsFixed(6)}, ${entry.longitude.toStringAsFixed(6)}'),
-              if (entry.addressText != null && entry.addressText!.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(entry.addressText!),
-              ],
+              Text('Informasi Lokasi & Foto', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.calendar_today_outlined),
+                title: const Text('Waktu Pengambilan'),
+                subtitle: Text(formattedDate),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.location_on_outlined),
+                title: const Text('Koordinat GPS'),
+                subtitle: Text(coordText),
+                trailing: IconButton(
+                  tooltip: 'Salin Koordinat',
+                  icon: const Icon(Icons.copy_outlined),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: coordText));
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Koordinat disalin ke clipboard')),
+                    );
+                  },
+                ),
+              ),
+              if (entry.addressText != null && entry.addressText!.isNotEmpty)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.map_outlined),
+                  title: const Text('Alamat Terdata'),
+                  subtitle: Text(entry.addressText!),
+                ),
             ],
           ),
         );
@@ -315,15 +360,13 @@ class _HistoryDetailScreenState extends State<_HistoryDetailScreen> {
     );
   }
 
-  /// Hapus foto yang sedang tampil. Kalau masih ada foto lain, lanjut ke
-  /// foto berikutnya (atau sebelumnya jika itu foto terakhir); kalau list
-  /// jadi kosong, otomatis kembali ke grid.
+  /// Hapus foto yang sedang tampil.
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Hapus foto ini?'),
-        content: const Text('Foto original dan processed akan dihapus permanen.'),
+        content: const Text('Foto asli dan foto ber-watermark akan dihapus permanen.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -331,6 +374,7 @@ class _HistoryDetailScreenState extends State<_HistoryDetailScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
             child: const Text('Hapus'),
           ),
         ],
@@ -361,8 +405,22 @@ class _HistoryDetailScreenState extends State<_HistoryDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Detail Foto'),
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Column(
+          children: [
+            Text(
+              'Foto ${_currentIndex + 1} dari ${_entries.length}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+            Text(
+              DateFormat('dd MMM yyyy, HH:mm', 'id_ID').format(_current.timestamp),
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+          ],
+        ),
         actions: [
           IconButton(tooltip: 'Info foto', icon: const Icon(Icons.info_outline), onPressed: _showInfo),
           IconButton(tooltip: 'Bagikan', icon: const Icon(Icons.share_outlined), onPressed: _share),
@@ -375,7 +433,28 @@ class _HistoryDetailScreenState extends State<_HistoryDetailScreen> {
         onPageChanged: (index) => setState(() => _currentIndex = index),
         itemBuilder: (context, index) {
           return Center(
-            child: Image.file(File(_entries[index].processedPath), fit: BoxFit.contain),
+            child: InteractiveViewer(
+              minScale: 1.0,
+              maxScale: 4.0,
+              child: Image.file(
+                File(_entries[index].processedPath),
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  padding: const EdgeInsets.all(24),
+                  color: Colors.black,
+                  child: const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.broken_image_outlined, size: 48, color: Colors.white38),
+                        SizedBox(height: 12),
+                        Text('Foto tidak ditemukan di penyimpanan.', style: TextStyle(color: Colors.white70)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           );
         },
       ),
