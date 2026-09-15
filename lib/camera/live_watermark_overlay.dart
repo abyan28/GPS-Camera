@@ -48,6 +48,16 @@ const _portraitMaxWidth = 320.0;
 /// menumpuk jadi banyak baris.
 const _landscapeMaxWidthFraction = 0.62;
 
+/// Padding di dalam kotak lencana (badge) logo+nama aplikasi — lebih kecil
+/// dari padding panel utama karena badge memang dibuat ringkas ("tag"
+/// kecil), meniru `WatermarkRenderer._badgePadding`.
+const _badgeInnerPadding = 8.0;
+
+/// Berapa logical pixel kotak lencana TUMPANG TINDIH ke panel utama supaya
+/// terlihat "ditempelkan" (seperti label/tag), bukan mengambang terpisah
+/// dengan jarak kosong — meniru `WatermarkRenderer._badgeOverlap`.
+const _badgeOverlap = 6.0;
+
 /// Overlay watermark LIVE di atas viewfinder, sebelum shutter ditekan.
 /// Dirender dengan widget Flutter biasa (bukan `WatermarkRenderer` yang
 /// berbasis `image` package), jadi tidak identik piksel-demi-piksel dengan
@@ -153,6 +163,66 @@ class LiveWatermarkOverlay extends StatelessWidget {
       ),
     );
 
+    // Kotak lencana (badge) TERPISAH dari panel utama — ikon aplikasi kecil
+    // + nama aplikasi, ditempelkan menempel ke sisi panel (bukan bagian
+    // dari panel), meniru posisi logo di aplikasi referensi. Ditempel di
+    // sisi yang menjauhi tepi layar terdekat (kalau panel di atas, badge
+    // ditempel di BAWAH panel; kalau panel di bawah, badge ditempel di ATAS
+    // panel) lewat `Transform.translate` supaya sedikit tumpang tindih
+    // ("ditempelkan"), tanpa menambah ruang kosong di panel utama.
+    final badgeIconSize = fontSize * 1.1;
+    final badgePadding = _badgeInnerPadding * scale;
+    final badge = Container(
+      padding: EdgeInsets.all(badgePadding),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: config.opacity.clamp(0, 1)),
+        borderRadius: BorderRadius.circular(cornerRadius),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3 * scale),
+            child: Image.asset(
+              'assets/icon/app_icon.png',
+              width: badgeIconSize,
+              height: badgeIconSize,
+            ),
+          ),
+          SizedBox(width: spacing),
+          Text(
+            config.appBrandingText,
+            style: TextStyle(color: Colors.white, fontSize: fontSize, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+
+    final isTopPosition = _isTop(config.position);
+    final overlap = _badgeOverlap * scale;
+    // Transform.translate murni pergeseran visual saat digambar, TIDAK
+    // mengubah ukuran layout — badge tetap dianggap seukuran aslinya oleh
+    // Column, cuma "dilukis" bergeser supaya tumpang-tindih ke panel.
+    final translatedBadge = Transform.translate(
+      offset: Offset(0, isTopPosition ? -overlap : overlap),
+      child: badge,
+    );
+
+    // PENTING: crossAxisAlignment.end (BUKAN stretch) — `stretch` memaksa
+    // Column mengambil lebar PENUH area yang tersedia (karena constraint
+    // dari `Center` di pemanggil bersifat longgar-tak-terbatas), lalu
+    // memaksa `panel` ikut selebar itu juga, MENGABAIKAN `maxWidth: 320`
+    // milik `panel` sendiri (constraint ketat dari parent selalu menang
+    // atas `maxWidth` yang dideklarasikan child) — itu sebabnya kotak
+    // watermark live sempat jadi selebar layar. `end` cuma merapatkan
+    // badge ke sisi kanan lebar Column (yang mengikuti lebar `panel`,
+    // elemen terlebar), tanpa memaksa ukuran siapa pun.
+    final panelWithBadge = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: isTopPosition ? [panel, translatedBadge] : [translatedBadge, panel],
+    );
+
     // Posisi tengah (top/bottom, kasus default): pakai EdgeAnchoredRotated
     // supaya sisi yang ditempeli ikut menyesuaikan saat device dimiringkan
     // (misal watermark tetap tampak di BAWAH dari sudut pandang pengguna,
@@ -171,7 +241,7 @@ class LiveWatermarkOverlay extends StatelessWidget {
         // (lihat `EdgeAnchoredRotated`) — supaya tidak tumpang-tindih dengan
         // baris tombol shutter/switch kamera yang selalu di fisik-bawah.
         extraBottomMargin: _bottomControlsClearance,
-        child: panel,
+        child: panelWithBadge,
       );
     }
 
@@ -182,7 +252,7 @@ class LiveWatermarkOverlay extends StatelessWidget {
       bottom: _isTop(config.position) ? null : margin,
       left: _isRightAligned(config.position) ? null : margin,
       right: _isRightAligned(config.position) ? margin : null,
-      child: RotatedBox(quarterTurns: quarterTurns, child: panel),
+      child: RotatedBox(quarterTurns: quarterTurns, child: panelWithBadge),
     );
   }
 
@@ -273,7 +343,8 @@ class LiveWatermarkOverlay extends StatelessWidget {
     if (config.customText != null && config.customText!.trim().isNotEmpty) {
       addLine(config.customText!.trim(), maxLines: 2);
     }
-    addLine(config.appBrandingText);
+    // appBrandingText TIDAK lagi jadi baris teks biasa di sini — sekarang
+    // jadi baris header terpisah di pojok kanan-atas panel, lihat `headerRow`.
 
     return widgets;
   }

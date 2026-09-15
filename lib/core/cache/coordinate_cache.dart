@@ -19,15 +19,20 @@ class CoordinateCache<T> {
   final Map<String, _CacheEntry<T>> _store = {};
 
   /// Buat cache key dari koordinat yang dibulatkan ke [precisionDecimals].
-  String keyFor(double latitude, double longitude) {
-    return '${latitude.toStringAsFixed(precisionDecimals)},'
+  /// [extra] opsional ikut jadi bagian key — dipakai saat hasil yang
+  /// di-cache juga bergantung pada parameter lain selain koordinat (mis.
+  /// level zoom untuk thumbnail peta), supaya kombinasi yang berbeda tidak
+  /// dianggap cache hit yang sama.
+  String keyFor(double latitude, double longitude, {String extra = ''}) {
+    final base = '${latitude.toStringAsFixed(precisionDecimals)},'
         '${longitude.toStringAsFixed(precisionDecimals)}';
+    return extra.isEmpty ? base : '$base|$extra';
   }
 
   /// Ambil nilai tersimpan untuk koordinat ini, atau null jika belum ada
   /// atau sudah kedaluwarsa.
-  T? get(double latitude, double longitude) {
-    final key = keyFor(latitude, longitude);
+  T? get(double latitude, double longitude, {String extra = ''}) {
+    final key = keyFor(latitude, longitude, extra: extra);
     final entry = _store[key];
     if (entry == null) return null;
     if (DateTime.now().difference(entry.storedAt) > ttl) {
@@ -38,8 +43,8 @@ class CoordinateCache<T> {
   }
 
   /// Simpan nilai baru untuk koordinat ini, menimpa entri lama jika ada.
-  void set(double latitude, double longitude, T value) {
-    _store[keyFor(latitude, longitude)] = _CacheEntry(value, DateTime.now());
+  void set(double latitude, double longitude, T value, {String extra = ''}) {
+    _store[keyFor(latitude, longitude, extra: extra)] = _CacheEntry(value, DateTime.now());
   }
 
   /// Bersihkan seluruh isi cache (dipakai untuk privacy: "cache lokal harus

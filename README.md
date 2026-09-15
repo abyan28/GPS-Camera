@@ -1,4 +1,4 @@
-# GPS Camera
+# GeoPatriot
 
 Aplikasi kamera Flutter yang menandai setiap foto dengan lokasi GPS,
 alamat, thumbnail peta, dan waktu pengambilan lewat watermark yang
@@ -54,10 +54,22 @@ provider (arsitektur provider abstraction memang dirancang supaya mudah diganti)
 flutter pub get
 ```
 
-Daftar API key gratis di [locationiq.com](https://locationiq.com), lalu jalankan dengan:
+Daftar API key gratis di [locationiq.com](https://locationiq.com) (jatah
+gratis: 5.000 request/hari, 2 request/detik). API key TIDAK ditanam sebagai
+string polos di kode maupun hasil build — harus disandikan dulu lewat
+`tool/encode_api_key.dart` supaya tidak langsung terlihat kalau APK dibuka
+pakai `strings`/pembuka teks biasa (bukan keamanan sungguhan — cuma
+menaikkan sedikit kesulitan pengambilannya, lihat penjelasan lengkap di
+`lib/core/config/api_keys.dart`):
 
 ```
-flutter run --dart-define=LOCATIONIQ_API_KEY=xxxxxxxxxxxxx
+dart run tool/encode_api_key.dart <API_KEY_ASLI>
+```
+
+Salin hasilnya, lalu jalankan:
+
+```
+flutter run --dart-define=LOCATIONIQ_API_KEY_ENCODED=<hasil_encode>
 ```
 
 Tanpa API key, aplikasi tetap berjalan normal, hanya reverse geocoding dan
@@ -65,10 +77,26 @@ map thumbnail yang tidak aktif (watermark fallback ke koordinat saja).
 
 Izin kamera dan lokasi akan diminta saat aplikasi pertama kali dibuka.
 
+## Rilis APK publik (mis. GitHub Release)
+
+Supaya user baru bisa langsung pakai tanpa mendaftar API key sendiri, build
+APK rilis dengan API key milikmu sendiri (sudah disandikan seperti di atas)
+ikut ditanam:
+
+```
+flutter build apk --release --dart-define=LOCATIONIQ_API_KEY_ENCODED=<hasil_encode>
+```
+
+**Perlu disadari**: jatah 5.000 request/hari akan dipakai BERSAMA oleh
+semua orang yang memakai APK rilisanmu (bukan per-user), dan siapa pun yang
+niat membongkar (decompile) aplikasinya tetap bisa menemukan API key
+aslinya. Pantau pemakaian lewat dashboard LocationIQ, dan reset/ganti key
+kapan saja kalau mulai terlihat disalahgunakan.
+
 ## Verifikasi
 
 ```
 flutter analyze
 flutter test
-flutter build apk --debug --dart-define=LOCATIONIQ_API_KEY=xxxxxxxxxxxxx
+flutter build apk --debug --dart-define=LOCATIONIQ_API_KEY_ENCODED=<hasil_encode>
 ```

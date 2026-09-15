@@ -88,6 +88,10 @@ class SettingsScreen extends StatelessWidget {
             value: watermark.opacity,
             min: 0.1,
             max: 1.0,
+            // Nilainya geser kontinu (bukan bilangan bulat 0/1) — pakai
+            // format persen supaya label ikut berubah halus sesuai posisi
+            // geser, bukan dibulatkan ke 0 atau 1 seperti slider lain.
+            labelFormatter: (value) => '${(value * 100).round()}%',
             onChanged: (value) => controller.updateWatermark((c) => c.copyWith(opacity: value)),
           ),
           _SliderSetting(
@@ -221,6 +225,7 @@ class _SliderSetting extends StatelessWidget {
     required this.max,
     required this.onChanged,
     this.divisions,
+    this.labelFormatter,
   });
 
   final String label;
@@ -230,14 +235,20 @@ class _SliderSetting extends StatelessWidget {
   final int? divisions;
   final ValueChanged<double> onChanged;
 
+  /// Format tampilan nilai di label, default bilangan bulat. Dipakai untuk
+  /// slider yang nilainya BUKAN bilangan bulat (mis. opacity 0.1-1.0) supaya
+  /// label ikut berubah sesuai posisi geser, bukan dibulatkan ke 0/1.
+  final String Function(double value)? labelFormatter;
+
   @override
   Widget build(BuildContext context) {
+    final formattedValue = labelFormatter?.call(value) ?? value.round().toString();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('$label: ${value.round()}'),
+          Text('$label: $formattedValue'),
           Slider(
             value: value.clamp(min, max),
             min: min,

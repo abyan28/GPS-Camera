@@ -64,6 +64,15 @@ class _CameraScreenState extends State<CameraScreen>
   bool _showSavedBanner = false;
   Timer? _savedBannerTimer;
 
+  // Zoom kamera sungguhan (hardware/optik lewat API resmi package `camera`,
+  // BUKAN crop digital) — dikendalikan lewat gesture cubit di preview.
+  double _minZoom = 1.0;
+  double _maxZoom = 1.0;
+  double _currentZoom = 1.0;
+  double _baseZoom = 1.0;
+  bool _showZoomIndicator = false;
+  Timer? _zoomIndicatorTimer;
+
   /// Daftarkan observer lifecycle, siapkan capture controller, lalu mulai
   /// alur pengecekan izin.
   @override
@@ -101,6 +110,16 @@ class _CameraScreenState extends State<CameraScreen>
     // Cegah layar mati otomatis selagi preview kamera aktif, seperti
     // aplikasi kamera pada umumnya.
     await WakelockPlus.enable();
+
+    final minZoom = await _cameraService.getMinZoomLevel();
+    final maxZoom = await _cameraService.getMaxZoomLevel();
+    if (mounted) {
+      setState(() {
+        _minZoom = minZoom;
+        _maxZoom = maxZoom;
+        _currentZoom = minZoom;
+      });
+    }
 
     _locationSubscription = _locationService.watchSnapshot().listen(
       (snapshot) {
@@ -199,11 +218,34 @@ class _CameraScreenState extends State<CameraScreen>
     WidgetsBinding.instance.removeObserver(this);
     _locationSubscription?.cancel();
     _savedBannerTimer?.cancel();
+    _zoomIndicatorTimer?.cancel();
     _cameraService.dispose();
     _captureController.dispose();
     _rotationController.dispose();
     WakelockPlus.disable();
     super.dispose();
+  }
+
+  /// Catat level zoom saat ini sebagai dasar sebelum gesture cubit dimulai.
+  void _onScaleStart(ScaleStartDetails details) {
+    _baseZoom = _currentZoom;
+  }
+
+  /// Ubah level zoom kamera sungguhan mengikuti gesture cubit, di-clamp ke
+  /// rentang yang didukung kamera, sambil menampilkan indikator level zoom
+  /// sesaat (otomatis hilang sendiri).
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    final newZoom = (_baseZoom * details.scale).clamp(_minZoom, _maxZoom);
+    if (newZoom == _currentZoom) return;
+
+    _currentZoom = newZoom;
+    _cameraService.setZoomLevel(newZoom);
+    setState(() => _showZoomIndicator = true);
+
+    _zoomIndicatorTimer?.cancel();
+    _zoomIndicatorTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) setState(() => _showZoomIndicator = false);
+    });
   }
 
   /// Jalankan capture saat tombol shutter ditekan, lalu tampilkan pesan
@@ -268,6 +310,10 @@ class _CameraScreenState extends State<CameraScreen>
                   liveMap: _liveMap,
                   showSavedBanner: _showSavedBanner,
                   hasMultipleCameras: _cameraService.hasMultipleCameras,
+                  currentZoom: _currentZoom,
+                  showZoomIndicator: _showZoomIndicator,
+                  onScaleStart: _onScaleStart,
+                  onScaleUpdate: _onScaleUpdate,
                   onSwitchCamera: () async {
                     await _cameraService.switchCamera();
                     setState(() {});
@@ -364,6 +410,10 @@ class _CameraBody extends StatelessWidget {
     required this.liveMap,
     required this.showSavedBanner,
     required this.hasMultipleCameras,
+    required this.currentZoom,
+    required this.showZoomIndicator,
+    required this.onScaleStart,
+    required this.onScaleUpdate,
     required this.onSwitchCamera,
     required this.onShutterPressed,
   });
@@ -375,6 +425,10 @@ class _CameraBody extends StatelessWidget {
   final MapSnapshot? liveMap;
   final bool showSavedBanner;
   final bool hasMultipleCameras;
+  final double currentZoom;
+  final bool showZoomIndicator;
+  final GestureScaleStartCallback onScaleStart;
+  final GestureScaleUpdateCallback onScaleUpdate;
   final VoidCallback onSwitchCamera;
   final VoidCallback onShutterPressed;
 
@@ -394,7 +448,11 @@ class _CameraBody extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             if (cameraReady && controller != null)
-              Center(child: CameraPreview(controller!))
+              GestureDetector(
+                onScaleStart: onScaleStart,
+                onScaleUpdate: onScaleUpdate,
+                child: Center(child: CameraPreview(controller!)),
+              )
             else
               const Center(child: CircularProgressIndicator()),
             // Hanya tampilkan watermark live saat kamera benar-benar siap —
@@ -409,6 +467,22 @@ class _CameraBody extends StatelessWidget {
                 mapThumbnailBytes: liveMap?.imageBytes,
                 previewScale: previewScale,
                 previewAreaSize: constraints.biggest,
+              ),
+            if (showZoomIndicator)
+              Center(
+                child: _RotatedControl(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${currentZoom.toStringAsFixed(1)}x',
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
               ),
             if (session != null && showSavedBanner)
               EdgeAnchoredRotated(

@@ -7,12 +7,16 @@ class AppSettings {
 
   final WatermarkConfiguration watermark;
 
-  /// Default ON sesuai PRD §14: original tidak boleh hilang secara diam-diam.
+  /// PRD §14 awalnya menyarankan default ON ("original tidak boleh hilang
+  /// diam-diam"), tapi diubah jadi OFF atas permintaan eksplisit user
+  /// (disetel mengikuti preferensi user sendiri yang sudah dicoba di device
+  /// nyata) — foto original tetap bisa diaktifkan manual kapan saja lewat
+  /// Pengaturan.
   final bool saveOriginal;
 
   factory AppSettings.defaults() => AppSettings(
         watermark: WatermarkConfiguration.defaultTemplate(),
-        saveOriginal: true,
+        saveOriginal: false,
       );
 
   AppSettings copyWith({WatermarkConfiguration? watermark, bool? saveOriginal}) {
@@ -33,7 +37,7 @@ class AppSettings {
       watermark: watermarkJson != null
           ? WatermarkConfiguration.fromJson(watermarkJson)
           : WatermarkConfiguration.defaultTemplate(),
-      saveOriginal: json['saveOriginal'] as bool? ?? true,
+      saveOriginal: json['saveOriginal'] as bool? ?? false,
     );
   }
 }

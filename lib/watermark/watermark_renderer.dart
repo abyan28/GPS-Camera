@@ -27,13 +27,30 @@ class WatermarkRenderer {
   static const _innerPadding = 14;
   static const _jpegQuality = 90;
 
+  /// Padding di dalam kotak lencana (badge) logo+nama aplikasi — lebih
+  /// kecil dari `_innerPadding` panel utama karena badge memang dibuat
+  /// ringkas ("tag" kecil), bukan sebesar panel info lokasi.
+  static const _badgePadding = 8;
+
+  /// Berapa piksel kotak lencana logo+nama TUMPANG TINDIH ke kotak utama
+  /// supaya terlihat "ditempelkan" (seperti label/tag), bukan sekadar
+  /// mengambang terpisah dengan jarak kosong di antaranya.
+  static const _badgeOverlap = 6;
+
   /// Render watermark ke [sourceImageBytes] sesuai [config] dan [data].
+  /// [appIconBytes] opsional (PNG/JPEG kecil) ditampilkan sebagai ikon
+  /// aplikasi di KOTAK TERPISAH (lencana kecil) bersama
+  /// [WatermarkConfiguration.appBrandingText], ditempelkan menempel ke sisi
+  /// panel info lokasi (BUKAN bagian dari panel itu sendiri — supaya panel
+  /// info tidak punya ruang kosong cuma gara-gara logo) — kalau
+  /// null/gagal didekode, lencana tetap tampil tanpa ikon (teks saja).
   /// Mengembalikan bytes JPEG hasil akhir. Melempar
   /// [WatermarkRenderException] jika gambar sumber tidak dapat didekode.
   Uint8List render({
     required Uint8List sourceImageBytes,
     required WatermarkData data,
     required WatermarkConfiguration config,
+    Uint8List? appIconBytes,
   }) {
     final source = img.decodeImage(sourceImageBytes);
     if (source == null) {
@@ -83,6 +100,16 @@ class WatermarkRenderer {
     );
 
     _drawPanel(oriented, panelOrigin.dx, panelOrigin.dy, panelWidth, panelHeight, config);
+
+    _drawBrandBadge(
+      oriented,
+      config: config,
+      appIconBytes: appIconBytes,
+      panelOrigin: panelOrigin,
+      panelWidth: panelWidth,
+      panelHeight: panelHeight,
+      imageHeight: oriented.height,
+    );
 
     var textX = panelOrigin.dx + _innerPadding;
     final textY = panelOrigin.dy + _innerPadding;
@@ -167,7 +194,8 @@ class WatermarkRenderer {
       lines.add(_WatermarkLine(config.customText!.trim(), maxLines: 2));
     }
 
-    lines.add(_WatermarkLine(config.appBrandingText));
+    // appBrandingText TIDAK lagi jadi baris teks biasa di sini — sekarang
+    // jadi baris header terpisah di pojok kanan-atas panel, lihat `render()`.
 
     if (config.showMapThumbnail && data.map != null) {
       lines.add(_WatermarkLine(data.map!.attributionText));
@@ -217,6 +245,68 @@ class WatermarkRenderer {
       y2: y + height,
       color: img.ColorRgba8(0, 0, 0, alpha),
       radius: config.cornerRadius,
+    );
+  }
+
+  /// Gambar kotak lencana (badge) kecil berisi ikon aplikasi + nama brand,
+  /// ditempelkan menempel ke SISI panel info lokasi (bukan bagian dari
+  /// panel itu) — meniru posisi logo di aplikasi referensi. Ditempel di
+  /// sisi yang menjauhi tepi gambar terdekat (kalau panel dekat tepi atas,
+  /// lencana ditempel di BAWAH panel; kalau panel dekat tepi bawah,
+  /// lencana ditempel di ATAS panel), supaya lencananya tidak pernah
+  /// terpotong keluar batas gambar apa pun posisi watermark yang dipilih.
+  void _drawBrandBadge(
+    img.Image image, {
+    required WatermarkConfiguration config,
+    required Uint8List? appIconBytes,
+    required ({int dx, int dy}) panelOrigin,
+    required int panelWidth,
+    required int panelHeight,
+    required int imageHeight,
+  }) {
+    final font = _fontFor(config.fontSize);
+    final iconSize = (config.fontSize * 1.1).round();
+
+    img.Image? icon;
+    if (appIconBytes != null) {
+      final decoded = img.decodeImage(appIconBytes);
+      if (decoded != null) {
+        icon = img.copyResize(decoded, width: iconSize, height: iconSize);
+      }
+    }
+
+    final iconReservedWidth = icon != null ? iconSize + config.spacing.round() : 0;
+    final textWidth = (config.appBrandingText.length * _approxCharWidth(font)).round();
+    final rowWidth = iconReservedWidth + textWidth;
+    final rowHeight = icon != null ? (iconSize > _lineHeightFor(font) ? iconSize : _lineHeightFor(font)) : _lineHeightFor(font);
+
+    final badgeWidth = rowWidth + 2 * _badgePadding;
+    final badgeHeight = rowHeight + 2 * _badgePadding;
+
+    // Rata kanan terhadap panel utama, menempel di sisi yang menjauhi tepi
+    // gambar terdekat (lihat dokumentasi method).
+    final badgeX = (panelOrigin.dx + panelWidth - badgeWidth).clamp(0, image.width - badgeWidth);
+    final attachAbovePanel = panelOrigin.dy > (imageHeight / 2);
+    final badgeY = attachAbovePanel
+        ? (panelOrigin.dy - badgeHeight + _badgeOverlap).clamp(0, image.height - badgeHeight)
+        : (panelOrigin.dy + panelHeight - _badgeOverlap).clamp(0, image.height - badgeHeight);
+
+    _drawPanel(image, badgeX, badgeY, badgeWidth, badgeHeight, config);
+
+    final rowX = badgeX + _badgePadding;
+    final rowY = badgeY + _badgePadding;
+    if (icon != null) {
+      final iconY = rowY + (rowHeight - iconSize) ~/ 2;
+      img.compositeImage(image, icon, dstX: rowX, dstY: iconY);
+    }
+    final textY = rowY + (rowHeight - _lineHeightFor(font)) ~/ 2;
+    img.drawString(
+      image,
+      config.appBrandingText,
+      font: font,
+      x: rowX + iconReservedWidth,
+      y: textY,
+      color: img.ColorRgba8(255, 255, 255, 255),
     );
   }
 

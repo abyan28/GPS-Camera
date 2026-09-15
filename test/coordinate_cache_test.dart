@@ -30,6 +30,16 @@ void main() {
     expect(cache.get(-6.914744, 107.609810), isNull);
   });
 
+  test('koordinat sama tapi extra berbeda dianggap entri cache berbeda', () {
+    final cache = CoordinateCache<String>(precisionDecimals: 4);
+    cache.set(-6.914744, 107.609810, 'peta zoom 16', extra: 'zoom=16');
+    cache.set(-6.914744, 107.609810, 'peta zoom 18', extra: 'zoom=18');
+
+    expect(cache.get(-6.914744, 107.609810, extra: 'zoom=16'), 'peta zoom 16');
+    expect(cache.get(-6.914744, 107.609810, extra: 'zoom=18'), 'peta zoom 18');
+    expect(cache.get(-6.914744, 107.609810, extra: 'zoom=20'), isNull);
+  });
+
   test('clear membersihkan seluruh isi cache', () {
     final cache = CoordinateCache<String>();
     cache.set(-6.914744, 107.609810, 'alamat A');

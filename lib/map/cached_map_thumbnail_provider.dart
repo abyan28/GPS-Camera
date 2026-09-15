@@ -19,12 +19,16 @@ class CachedMapThumbnailProvider implements MapThumbnailProvider {
     required double longitude,
     int zoom = 16,
   }) async {
-    final cached = _cache.get(latitude, longitude);
+    // `zoom` ikut jadi bagian cache key — tanpa ini, mengubah setting
+    // "Zoom Peta" di lokasi yang sama akan selalu kena cache hit dari
+    // zoom lama dan terlihat seperti tidak berpengaruh sama sekali.
+    final extra = 'zoom=$zoom';
+    final cached = _cache.get(latitude, longitude, extra: extra);
     if (cached != null) return cached;
 
     final result = await _inner.fetchThumbnail(latitude: latitude, longitude: longitude, zoom: zoom);
     if (result != null) {
-      _cache.set(latitude, longitude, result);
+      _cache.set(latitude, longitude, result, extra: extra);
     }
     return result;
   }

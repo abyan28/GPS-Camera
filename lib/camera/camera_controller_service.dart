@@ -41,6 +41,29 @@ class CameraControllerService {
     await controller.setFlashMode(mode);
   }
 
+  /// Level zoom minimum (selalu 1.0) yang didukung kamera aktif.
+  Future<double> getMinZoomLevel() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return 1.0;
+    return controller.getMinZoomLevel();
+  }
+
+  /// Level zoom maksimum (zoom hardware/optik sungguhan lewat API resmi
+  /// package `camera`, BUKAN crop digital) yang didukung kamera aktif.
+  Future<double> getMaxZoomLevel() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return 1.0;
+    return controller.getMaxZoomLevel();
+  }
+
+  /// Ubah level zoom kamera aktif secara langsung (dipanggil berulang saat
+  /// gesture cubit berlangsung).
+  Future<void> setZoomLevel(double zoom) async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    await controller.setZoomLevel(zoom);
+  }
+
   /// Ambil satu foto dari kamera yang sedang aktif. Orientasi capture
   /// dikunci HANYA sesaat di sekitar pemanggilan ini (bukan terus-menerus
   /// selama kamera menyala) — mengunci terus-menerus terbukti membuat

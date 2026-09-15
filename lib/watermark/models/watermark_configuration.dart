@@ -61,22 +61,23 @@ class WatermarkConfiguration {
   final String? customText;
   final String appBrandingText;
 
-  /// Template default: field yang paling umum ditampilkan aplikasi GPS
-  /// Map Camera komersial, opacity/ukuran seimbang.
+  /// Template default: disetel mengikuti preferensi user sendiri (hasil
+  /// pengaturan yang sudah dicoba-coba di device nyata dan diminta jadi
+  /// default), bukan lagi tebakan awal.
   factory WatermarkConfiguration.defaultTemplate() => const WatermarkConfiguration(
         showLocationName: true,
         showAddress: true,
         showCoordinates: true,
         showDate: true,
         showTime: true,
-        showTimezone: false,
-        showAccuracy: false,
+        showTimezone: true,
+        showAccuracy: true,
         showAltitude: false,
         showMapThumbnail: true,
         position: WatermarkPosition.bottom,
-        opacity: 0.55,
-        fontSize: 20,
-        thumbnailSize: 140,
+        opacity: 0.40,
+        fontSize: 14,
+        thumbnailSize: 160,
         margin: 16,
         cornerRadius: 12,
         spacing: 4,
@@ -193,7 +194,11 @@ class WatermarkConfiguration {
         'spacing': spacing,
         'mapZoom': mapZoom,
         'customText': customText,
-        'appBrandingText': appBrandingText,
+        // appBrandingText SENGAJA tidak disimpan — field ini tidak pernah
+        // bisa diubah dari UI Pengaturan (murni default kode), menyimpannya
+        // cuma bikin nilai lama "basi" tersimpan kalau nama aplikasi
+        // berubah di rilis berikutnya (pernah terjadi: tersimpan "GPS
+        // Camera" walau kode sudah default "GeoPatriot").
       };
 
   /// Baca kembali konfigurasi dari Map hasil [toJson]. Field yang hilang
@@ -223,7 +228,8 @@ class WatermarkConfiguration {
       spacing: (json['spacing'] as num?)?.toDouble() ?? fallback.spacing,
       mapZoom: json['mapZoom'] as int? ?? fallback.mapZoom,
       customText: json['customText'] as String?,
-      appBrandingText: json['appBrandingText'] as String? ?? fallback.appBrandingText,
+      // appBrandingText tidak dibaca dari storage (lihat catatan di toJson)
+      // — selalu pakai default terbaru dari kode.
     );
   }
 }

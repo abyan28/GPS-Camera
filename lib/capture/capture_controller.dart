@@ -5,6 +5,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 import '../camera/camera_controller_service.dart';
 import '../core/network/safe_fetch.dart';
@@ -67,6 +68,26 @@ class CaptureController extends ChangeNotifier {
   CaptureSession? lastSession;
   String? errorMessage;
 
+  /// Cache bytes ikon aplikasi (untuk header watermark) supaya cuma dimuat
+  /// sekali dari asset bundle, bukan setiap capture.
+  Uint8List? _appIconBytes;
+  bool _appIconLoadAttempted = false;
+
+  /// Muat bytes ikon aplikasi dari asset bundle sekali saja. Kegagalan
+  /// (mis. asset tidak ada) diabaikan — header watermark tetap tampil
+  /// tanpa ikon, teks saja, bukan menggagalkan capture.
+  Future<Uint8List?> _loadAppIconBytes() async {
+    if (_appIconLoadAttempted) return _appIconBytes;
+    _appIconLoadAttempted = true;
+    try {
+      final data = await rootBundle.load('assets/icon/app_icon.png');
+      _appIconBytes = data.buffer.asUint8List();
+    } catch (_) {
+      _appIconBytes = null;
+    }
+    return _appIconBytes;
+  }
+
   /// Jalankan satu siklus capture penuh. Kegagalan lokasi/kamera/storage
   /// dianggap kegagalan capture; kegagalan geocoding/map/EXIF hanya
   /// menghasilkan data yang lebih sedikit, bukan capture gagal.
@@ -80,7 +101,7 @@ class CaptureController extends ChangeNotifier {
       final location = await _locationService.freezeSnapshot();
       final photo = await _cameraService.takePicture();
       final baseName = await _storageService.reserveBaseName(timestamp);
-      final originalFile = await _storageService.saveOriginal(photo.path, baseName: baseName);
+      final stagingOriginal = await _storageService.saveOriginal(photo.path, baseName: baseName);
 
       final address = await fetchSafely(
         () => _geocodingProvider.reverseGeocode(latitude: location.latitude, longitude: location.longitude),
@@ -103,19 +124,25 @@ class CaptureController extends ChangeNotifier {
         address: address,
         map: map,
       );
+      final appIconBytes = await _loadAppIconBytes();
       final processedBytes = _watermarkRenderer.render(
-        sourceImageBytes: await originalFile.readAsBytes(),
+        sourceImageBytes: await stagingOriginal.readAsBytes(),
         data: watermarkData,
         config: config,
+        appIconBytes: appIconBytes,
       );
-      final stagingFile = await _storageService.saveProcessed(processedBytes, baseName: baseName);
+      final stagingProcessed = await _storageService.saveProcessed(processedBytes, baseName: baseName);
 
-      await _writeExifSafely(stagingFile, location, timestamp);
+      await _writeExifSafely(stagingProcessed, location, timestamp);
 
-      final processedFile = await _storageService.publishProcessedToGallery(stagingFile, baseName: baseName);
+      final processedFile = await _storageService.publishProcessedToGallery(stagingProcessed, baseName: baseName);
 
-      if (!_saveOriginalProvider()) {
-        await originalFile.delete();
+      final File originalFile;
+      if (_saveOriginalProvider()) {
+        originalFile = await _storageService.publishOriginalToGallery(stagingOriginal, baseName: baseName);
+      } else {
+        await stagingOriginal.delete();
+        originalFile = stagingOriginal;
       }
 
       final session = CaptureSession(

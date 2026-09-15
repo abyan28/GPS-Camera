@@ -16,7 +16,7 @@ void main() {
 
     final settings = await service.load();
 
-    expect(settings.saveOriginal, isTrue);
+    expect(settings.saveOriginal, isFalse);
     expect(settings.watermark.position, WatermarkPosition.bottom);
   });
 
@@ -46,6 +46,6 @@ void main() {
 
     final settings = await service.load();
 
-    expect(settings.saveOriginal, isTrue);
+    expect(settings.saveOriginal, isFalse);
   });
 }
