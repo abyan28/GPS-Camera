@@ -24,6 +24,7 @@ import 'camera_controller_service.dart';
 import 'device_rotation_controller.dart';
 import 'edge_anchored_rotated.dart';
 import 'live_watermark_overlay.dart';
+import 'zoom_ruler_control.dart';
 
 /// Berapa lama banner "Tersimpan" tetap tampil setelah capture sukses,
 /// sebelum otomatis hilang sendiri.
@@ -65,13 +66,14 @@ class _CameraScreenState extends State<CameraScreen>
   Timer? _savedBannerTimer;
 
   // Zoom kamera sungguhan (hardware/optik lewat API resmi package `camera`,
-  // BUKAN crop digital) — dikendalikan lewat gesture cubit di preview.
+  // BUKAN crop digital) — dikendalikan lewat ZoomRulerControl (drag) DAN
+  // gesture cubit di preview, keduanya menulis ke `_currentZoom` yang SAMA
+  // (package `camera` tidak punya getter "level zoom saat ini", jadi
+  // variabel inilah satu-satunya sumber kebenaran di sisi app).
   double _minZoom = 1.0;
   double _maxZoom = 1.0;
   double _currentZoom = 1.0;
   double _baseZoom = 1.0;
-  bool _showZoomIndicator = false;
-  Timer? _zoomIndicatorTimer;
 
   /// Daftarkan observer lifecycle, siapkan capture controller, lalu mulai
   /// alur pengecekan izin.
@@ -218,7 +220,6 @@ class _CameraScreenState extends State<CameraScreen>
     WidgetsBinding.instance.removeObserver(this);
     _locationSubscription?.cancel();
     _savedBannerTimer?.cancel();
-    _zoomIndicatorTimer?.cancel();
     _cameraService.dispose();
     _captureController.dispose();
     _rotationController.dispose();
@@ -232,20 +233,23 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   /// Ubah level zoom kamera sungguhan mengikuti gesture cubit, di-clamp ke
-  /// rentang yang didukung kamera, sambil menampilkan indikator level zoom
-  /// sesaat (otomatis hilang sendiri).
+  /// rentang yang didukung kamera. `ZoomRulerControl` yang selalu terlihat
+  /// otomatis ikut update posisi indikatornya lewat `_currentZoom` yang sama.
   void _onScaleUpdate(ScaleUpdateDetails details) {
     final newZoom = (_baseZoom * details.scale).clamp(_minZoom, _maxZoom);
     if (newZoom == _currentZoom) return;
-
-    _currentZoom = newZoom;
+    setState(() => _currentZoom = newZoom);
     _cameraService.setZoomLevel(newZoom);
-    setState(() => _showZoomIndicator = true);
+  }
 
-    _zoomIndicatorTimer?.cancel();
-    _zoomIndicatorTimer = Timer(const Duration(seconds: 1), () {
-      if (mounted) setState(() => _showZoomIndicator = false);
-    });
+  /// Ubah level zoom kamera sesuai posisi drag di `ZoomRulerControl` —
+  /// jalur kedua yang menulis ke `_currentZoom` yang sama dengan gesture
+  /// cubit, supaya keduanya selalu sinkron.
+  void _onRulerZoomChanged(double zoom) {
+    final clamped = zoom.clamp(_minZoom, _maxZoom);
+    if (clamped == _currentZoom) return;
+    setState(() => _currentZoom = clamped);
+    _cameraService.setZoomLevel(clamped);
   }
 
   /// Jalankan capture saat tombol shutter ditekan, lalu tampilkan pesan
@@ -310,10 +314,12 @@ class _CameraScreenState extends State<CameraScreen>
                   liveMap: _liveMap,
                   showSavedBanner: _showSavedBanner,
                   hasMultipleCameras: _cameraService.hasMultipleCameras,
+                  minZoom: _minZoom,
+                  maxZoom: _maxZoom,
                   currentZoom: _currentZoom,
-                  showZoomIndicator: _showZoomIndicator,
                   onScaleStart: _onScaleStart,
                   onScaleUpdate: _onScaleUpdate,
+                  onRulerZoomChanged: _onRulerZoomChanged,
                   onSwitchCamera: () async {
                     await _cameraService.switchCamera();
                     setState(() {});
@@ -410,10 +416,12 @@ class _CameraBody extends StatelessWidget {
     required this.liveMap,
     required this.showSavedBanner,
     required this.hasMultipleCameras,
+    required this.minZoom,
+    required this.maxZoom,
     required this.currentZoom,
-    required this.showZoomIndicator,
     required this.onScaleStart,
     required this.onScaleUpdate,
+    required this.onRulerZoomChanged,
     required this.onSwitchCamera,
     required this.onShutterPressed,
   });
@@ -425,10 +433,12 @@ class _CameraBody extends StatelessWidget {
   final MapSnapshot? liveMap;
   final bool showSavedBanner;
   final bool hasMultipleCameras;
+  final double minZoom;
+  final double maxZoom;
   final double currentZoom;
-  final bool showZoomIndicator;
   final GestureScaleStartCallback onScaleStart;
   final GestureScaleUpdateCallback onScaleUpdate;
+  final ValueChanged<double> onRulerZoomChanged;
   final VoidCallback onSwitchCamera;
   final VoidCallback onShutterPressed;
 
@@ -468,22 +478,8 @@ class _CameraBody extends StatelessWidget {
                 previewScale: previewScale,
                 previewAreaSize: constraints.biggest,
               ),
-            if (showZoomIndicator)
-              Center(
-                child: _RotatedControl(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      '${currentZoom.toStringAsFixed(1)}x',
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ),
+            if (cameraReady && maxZoom > minZoom)
+              _buildZoomRuler(constraints, quarterTurns: quarterTurns),
             if (session != null && showSavedBanner)
               EdgeAnchoredRotated(
                 targetEdge: ScreenEdge.top,
@@ -529,6 +525,52 @@ class _CameraBody extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  /// Bangun `ZoomRulerControl` yang posisinya berpindah mulus (bukan
+  /// loncat/berkedip) antara sisi kanan (portrait) dan dekat bawah
+  /// (landscape) — selalu pakai `left`+`top` absolut (dihitung manual untuk
+  /// tiap orientasi) di kedua kasus, bukan bertukar `left`/`right`/`top`/
+  /// `bottom` mana yang null, supaya `AnimatedPositioned` bisa
+  /// meng-interpolasi angkanya dengan benar alih-alih widget "meloncat"
+  /// begitu saja saat orientasi berubah.
+  ///
+  /// `ZoomRulerControl` SENDIRI selalu vertikal (lihat dokumentasinya) —
+  /// `RotatedBox(quarterTurns: quarterTurns)` di sini yang membuatnya
+  /// tampak horizontal & terbaca benar saat device dimiringkan, pola yang
+  /// SAMA dengan `_RotatedControl` (ikon-ikon lain di layar ini). Ukuran
+  /// setelah dirotasi (lebar/tinggi TERTUKAR untuk quarterTurns ganjil)
+  /// dipakai untuk hitung posisi, supaya tetap pas di kedua orientasi.
+  Widget _buildZoomRuler(BoxConstraints constraints, {required int quarterTurns}) {
+    const rulerLength = 220.0;
+    const rulerThickness = ZoomRulerControl.thickness;
+    const edgeMargin = 8.0;
+    // Diletakkan di atas baris tombol shutter (bottom: 48, tinggi ~72)
+    // supaya tidak tumpang tindih saat landscape.
+    const landscapeBottomMargin = 140.0;
+    final isLandscape = quarterTurns.isOdd;
+
+    final portraitLeft = constraints.maxWidth - rulerThickness - edgeMargin;
+    final portraitTop = (constraints.maxHeight - rulerLength) / 2;
+    final landscapeLeft = (constraints.maxWidth - rulerLength) / 2;
+    final landscapeTop = constraints.maxHeight - landscapeBottomMargin - rulerThickness;
+
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeInOut,
+      left: isLandscape ? landscapeLeft : portraitLeft,
+      top: isLandscape ? landscapeTop : portraitTop,
+      child: RotatedBox(
+        quarterTurns: quarterTurns,
+        child: ZoomRulerControl(
+          minZoom: minZoom,
+          maxZoom: maxZoom,
+          currentZoom: currentZoom,
+          onZoomChanged: onRulerZoomChanged,
+          length: rulerLength,
+        ),
+      ),
     );
   }
 
