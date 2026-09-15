@@ -33,12 +33,19 @@ class FixedCameraPreview extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
+        Widget previewWidget;
+        try {
+          previewWidget = controller.buildPreview();
+        } catch (_) {
+          return const SizedBox.shrink();
+        }
+
         return AspectRatio(
           aspectRatio: 1 / value.aspectRatio,
           child: Stack(
             fit: StackFit.expand,
             children: [
-              controller.buildPreview(),
+              previewWidget,
               ?child,
             ],
           ),

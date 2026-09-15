@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:intl/date_symbol_data_local.dart';
 
 import '../camera/camera_controller_service.dart';
 import '../core/network/safe_fetch.dart';
@@ -164,9 +165,9 @@ class CaptureController extends ChangeNotifier {
         baseName: baseName,
         originalPath: originalFile.path,
         processedPath: processedFile.path,
+        timestamp: timestamp,
         latitude: location.latitude,
         longitude: location.longitude,
-        timestamp: timestamp,
         addressText: address == null ? null : _formattedAddress(address),
       ));
 
@@ -175,7 +176,8 @@ class CaptureController extends ChangeNotifier {
     } on LocationAccessException catch (e) {
       errorMessage = e.userMessage;
       status = CaptureStatus.error;
-    } catch (_) {
+    } catch (e, stackTrace) {
+      debugPrint('Gagal mengambil foto: $e\n$stackTrace');
       errorMessage = 'Gagal mengambil foto. Coba lagi.';
       status = CaptureStatus.error;
     }
@@ -220,7 +222,8 @@ class _WatermarkRenderPayload {
 
 /// Fungsi top-level untuk rendering watermark di isolate terpisah via [compute],
 /// mencegah freeze/jank pada UI thread saat mengolah foto resolusi tinggi.
-Uint8List _renderWatermarkInIsolate(_WatermarkRenderPayload payload) {
+Future<Uint8List> _renderWatermarkInIsolate(_WatermarkRenderPayload payload) async {
+  await initializeDateFormatting('id_ID');
   final renderer = payload.renderer ?? WatermarkRenderer();
   return renderer.render(
     sourceImageBytes: payload.sourceImageBytes,

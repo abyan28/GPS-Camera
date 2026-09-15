@@ -63,3 +63,7 @@ test/result/
 # sekali untuk menurunkan aset asli project (lihat assets/icon/app_icon.png) —
 # bukan bagian dari source project.
 referensi/
+
+# IDE and agent internal metadata
+.hermes/
+

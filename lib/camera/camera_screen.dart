@@ -208,12 +208,15 @@ class _CameraScreenState extends State<CameraScreen>
   /// (terlihat sebagai layar putih + ikon loading sekilas).
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_cameraReady) return;
+    if (!_cameraReady && state != AppLifecycleState.resumed) return;
     if (state == AppLifecycleState.paused) {
+      setState(() => _cameraReady = false);
       _cameraService.pause();
       WakelockPlus.disable();
     } else if (state == AppLifecycleState.resumed) {
-      _cameraService.resume();
+      _cameraService.resume().then((_) {
+        if (mounted) setState(() => _cameraReady = true);
+      });
       WakelockPlus.enable();
     }
   }

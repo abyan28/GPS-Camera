@@ -349,3 +349,17 @@ Mengacu ke `agents/workflow-free-first.md`. Centang `[✓]` + ✅ setiap fase/ta
   * **File Baru**: `lib/camera/widgets/fixed_camera_preview.dart`.
   * **File Diubah**: `lib/camera/camera_screen.dart`.
   * **VERIFIKASI**: `flutter analyze` 0 issues (bersih), `flutter test` 38/38 tests lolos (100% pass).
+
+## Fase Perbaikan Bug Capture & Lifecycle Preview — Isolate Locale & Disposed Safety
+- [✓] ✅ Fix Gagal Mengambil Foto di Samsung S24+ & Disposed CameraController Exception (Selesai)
+  * **Root Cause 1 Ditemukan (Gagal Ambil Foto)**: `_renderWatermarkInIsolate` dijalankan di Dart isolate terpisah via `compute()`. Paket `intl` (`DateFormat('dd MMMM yyyy HH:mm:ss', 'id_ID')`) membutuhkan inisialisasi lokal. Inisialisasi `initializeDateFormatting('id_ID')` sebelumnya hanya dijalankan di `main()` pada root isolate. Karena memori antar isolate di Dart tidak terbagi (shared memory), pemanggilan `DateFormat` di dalam background isolate memicu `LocaleDataException: Locale data has not been initialized, call initializeDateFormatting(<locale>)`. Exception ini tertangkap oleh blok `catch (_)` generik di `CaptureController.capture()`, menyebabkan status capture selalu gagal dengan pesan "Gagal mengambil foto. Coba lagi."
+  * **Solusi Root Cause 1**:
+    1. Mengubah `_renderWatermarkInIsolate` menjadi `async` dan menambahkan `await initializeDateFormatting('id_ID');` sebelum eksekusi rendering watermark di background isolate.
+    2. Menghapus silent error swallow pada `CaptureController.capture()` dengan mencetak log detail error dan stack trace (`debugPrint('Gagal mengambil foto: $e\n$stackTrace')`).
+  * **Root Cause 2 Ditemukan (Disposed CameraController)**: Saat transisi siklus hidup aplikasi (seperti screenshot sistem, menarik notification shade, atau meminimalkan aplikasi), `FixedCameraPreview` mencoba memanggil `controller.buildPreview()`. Jika controller berada dalam proses dispose/pause atau belum selesai resume, plugin `camera` melempar `CameraException: Disposed CameraController, buildPreview() was called on a disposed CameraController`.
+  * **Solusi Root Cause 2**:
+    1. Membungkus pemanggilan `controller.buildPreview()` di `FixedCameraPreview` dengan `try-catch` defensif dan fallback ke `SizedBox.shrink()` jika controller sedang dalam transisi dispose.
+    2. Memperbaiki sinkronisasi lifecycle di `lib/camera/camera_screen.dart:didChangeAppLifecycleState`: saat `paused`, segera ubah `_cameraReady = false` agar UI unmount preview sebelum controller dipause; saat `resumed`, tunggu `_cameraService.resume()` tuntas sebelum menyetel `_cameraReady = true`.
+  * **File Diubah**: `lib/capture/capture_controller.dart`, `lib/camera/widgets/fixed_camera_preview.dart`, `lib/camera/camera_screen.dart`.
+  * **VERIFIKASI**: `flutter analyze` 0 issues (bersih), `flutter test` 38/38 tests lolos (100% pass).
+
