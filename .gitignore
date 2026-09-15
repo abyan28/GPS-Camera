@@ -67,3 +67,10 @@ referensi/
 # IDE and agent internal metadata
 .hermes/
 
+# Keystore rilis Android & credential-nya — RAHASIA, tidak boleh pernah
+# ter-commit (kalau bocor, siapa pun bisa menandatangani APK palsu yang
+# dianggap "update sah" oleh Android untuk versi yang sudah ter-install).
+/android/key.properties
+/android/app/*.jks
+/android/app/*.keystore
+
