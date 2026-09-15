@@ -341,3 +341,11 @@ Mengacu ke `agents/workflow-free-first.md`. Centang `[✓]` + ✅ setiap fase/ta
   * **File Diubah**: `lib/camera/camera_screen.dart`, `lib/camera/widgets/camera_bottom_bar.dart`.
   * **File Baru**: `test/camera_bottom_bar_test.dart` (pengujian widget untuk kestabilan baris horizontal di portrait & landscape, rotasi in-place, disabled state saat busy, dan single-camera layout).
   * **VERIFIKASI**: `flutter analyze` 0 issues (bersih), `flutter test` 38/38 tests lolos (100% pass).
+
+## Fase Perbaikan Bug Landscape Capture — Viewfinder AspectRatio Glitch
+- [✓] ✅ Fix Bug Viewfinder Menyusut & Berputar Saat Capture Landscape (Selesai)
+  * **Root Cause Ditemukan**: `CameraPreview` bawaan package `camera` mengamati `controller.value.lockedCaptureOrientation`. Ketika `CameraController.lockCaptureOrientation(landscape)` dipanggil sesaat sebelum `takePicture()` agar foto JPEG tersimpan dengan orientasi EXIF yang benar, `CameraPreview` internal mengubah rasio aspek menjadi 16:9 dan memutar tekstur dengan `RotatedBox(quarterTurns: 3)`. Karena jendela aplikasi dikunci ke portrait (`DeviceOrientation.portraitUp`), preview kamera tiba-tiba menyusut menjadi strip mendatar di tengah layar (letterboxing) dengan bar hitam besar di atas/bawah dan memutar gambar secara mendadak selama ~1 detik proses capture.
+  * **Implementasi FixedCameraPreview**: Membuat widget `FixedCameraPreview` di `lib/camera/widgets/fixed_camera_preview.dart` yang mengunci rasio aspek vertikal `1 / value.aspectRatio` secara stabil dan langsung menampilkan `controller.buildPreview()` tanpa rotasi buatan. Viewfinder tetap kokoh, mulus, dan tidak berkedip saat memotret, sementara foto hasil capture tetap tersimpan dengan orientasi landscape yang benar.
+  * **File Baru**: `lib/camera/widgets/fixed_camera_preview.dart`.
+  * **File Diubah**: `lib/camera/camera_screen.dart`.
+  * **VERIFIKASI**: `flutter analyze` 0 issues (bersih), `flutter test` 38/38 tests lolos (100% pass).

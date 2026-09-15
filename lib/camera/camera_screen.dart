@@ -22,6 +22,7 @@ import '../settings/settings_controller.dart';
 import '../storage/photo_storage_service.dart';
 import '../core/theme/camera_tokens.dart';
 import 'widgets/camera_bottom_bar.dart';
+import 'widgets/fixed_camera_preview.dart';
 import 'widgets/gps_status_pill.dart';
 import 'camera_controller_service.dart';
 import 'device_rotation_controller.dart';
@@ -464,7 +465,7 @@ class _CameraBody extends StatelessWidget {
               GestureDetector(
                 onScaleStart: onScaleStart,
                 onScaleUpdate: onScaleUpdate,
-                child: Center(child: CameraPreview(controller!)),
+                child: Center(child: FixedCameraPreview(controller!)),
               )
             else
               const Center(child: CircularProgressIndicator()),
